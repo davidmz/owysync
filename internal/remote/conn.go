@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -56,6 +57,99 @@ func (e *ConnError) Unwrap() error { return e.Err }
 type Client struct {
 	ssh  *ssh.Client
 	sftp *sftp.Client
+
+	done   chan struct{} // closed when the connection is gone
+	mu     sync.Mutex
+	reason error // why the connection is gone, if known
+}
+
+// Keepalive (spec §4): a request every keepaliveInterval, each waits as long for its reply;
+// keepaliveMisses unanswered in a row close the connection (spec §10).
+const (
+	keepaliveInterval = 15 * time.Second
+	keepaliveMisses   = 3
+)
+
+func newClient(c *ssh.Client) *Client {
+	cl := &Client{ssh: c, done: make(chan struct{})}
+	go func() {
+		err := c.Wait()
+		cl.mu.Lock()
+		if cl.reason == nil {
+			cl.reason = err
+		}
+		cl.mu.Unlock()
+		close(cl.done)
+	}()
+	go cl.keepalive()
+	return cl
+}
+
+// keepalive catches a dead connection that TCP does not report, e.g. after the laptop slept.
+func (c *Client) keepalive() {
+	t := time.NewTicker(keepaliveInterval)
+	defer t.Stop()
+	misses := 0
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-t.C:
+		}
+		reply := make(chan error, 1)
+		go func() {
+			_, _, err := c.ssh.SendRequest("keepalive@openssh.com", true, nil) // any reply will do
+			reply <- err
+		}()
+		select {
+		case err := <-reply:
+			if err != nil {
+				return // the connection is closed; Wait reports it
+			}
+			misses = 0
+			continue
+		case <-time.After(keepaliveInterval):
+		case <-c.done:
+			return
+		}
+		if misses++; misses == keepaliveMisses {
+			c.mu.Lock()
+			c.reason = fmt.Errorf("no reply to %d keepalives in a row", keepaliveMisses)
+			c.mu.Unlock()
+			c.ssh.Close()
+			return
+		}
+	}
+}
+
+// Done is closed when the connection is gone: closed by Close, by the server, by a network
+// error or after unanswered keepalives.
+func (c *Client) Done() <-chan struct{} { return c.done }
+
+// Err tells why the connection is gone; nil while it is up or if the reason is unknown.
+func (c *Client) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reason
+}
+
+// Closed reports whether the connection is already gone.
+func (c *Client) Closed() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// Retryable reports whether a Connect error may go away by itself: the host is unreachable
+// or the network broke during the handshake. Host key and key rejection errors are final.
+func Retryable(err error) bool {
+	var ce *ConnError
+	var ne net.Error
+	return errors.As(err, &ce) && ce.Stage == StageDial ||
+		errors.As(err, &ne) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (o Options) addr() string { return net.JoinHostPort(o.Host, strconv.Itoa(o.Port)) }
@@ -137,7 +231,7 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	}
 	conn.SetDeadline(time.Time{})
 	ok = true
-	return &Client{ssh: ssh.NewClient(sc, chans, reqs)}, nil
+	return newClient(ssh.NewClient(sc, chans, reqs)), nil
 }
 
 func (o Options) sshHint() string {

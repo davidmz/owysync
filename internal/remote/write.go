@@ -40,6 +40,9 @@ func (c *Client) Writer(root string) (*Writer, error) {
 	return &Writer{c: c, s: s, root: root, posix: posix, fallback: map[string]bool{}}, nil
 }
 
+// Closed reports whether the connection under the Writer is gone: nothing more will succeed.
+func (w *Writer) Closed() bool { return w.c.Closed() }
+
 func (w *Writer) abs(rel string) string { return path.Join(w.root, rel) }
 
 func randName() string {

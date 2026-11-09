@@ -33,7 +33,7 @@ func Live(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 		return err
 	}
 	defer lock.Close()
-	defer context.AfterFunc(ctx, func() { env.Client.Close() })()
+	defer context.AfterFunc(ctx, func() { env.Close() })()
 
 	// The watcher starts before the resync walks local: events meanwhile wait in the dirty set.
 	w, err := watch.Start(localDir)
@@ -122,12 +122,26 @@ func (l *live) loop(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				if l.s.x.w.Closed() { // the batch saw the connection go
+					if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
+						return err
+					}
+					needResync = true
+				}
 				continue
 			}
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-l.env.client().Done(): // lost while idle, e.g. the laptop slept
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
+				return err
+			}
+			needResync = true
 		case <-l.wake:
 		case <-wait:
 		case <-retry.C:
@@ -141,13 +155,20 @@ func (l *live) loop(ctx context.Context) error {
 	}
 }
 
-// resync runs a full resync. The dirty set is cleared first: the resync reads local after that.
+// resync runs a full resync, reconnecting while the connection is lost. The dirty set is
+// cleared first: the resync reads local after that.
 func (l *live) resync(ctx context.Context) error {
 	l.mu.Lock()
 	clear(l.dirty)
 	l.mu.Unlock()
 	clear(l.failed)
 	s, err := runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose}, l.out, l.errOut)
+	for err != nil && lost(ctx, l.env) {
+		if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
+			return err
+		}
+		s, err = runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose}, l.out, l.errOut)
+	}
 	if err != nil && !errors.Is(err, ErrFailed) {
 		return err
 	}

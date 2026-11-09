@@ -42,10 +42,17 @@ func Resync(ctx context.Context, env *Env, localDir string, o Options, out, errO
 	}
 	defer lock.Close()
 	// Ctrl+C: closing the connection aborts every SFTP call in flight (spec §4).
-	defer context.AfterFunc(ctx, func() { env.Client.Close() })()
+	defer context.AfterFunc(ctx, func() { env.Close() })()
 
-	_, err = runResync(ctx, env, localDir, o, out, errOut)
-	return err
+	for {
+		_, err = runResync(ctx, env, localDir, o, out, errOut)
+		if err == nil || !lost(ctx, env) {
+			return err
+		}
+		if err := reconnect(ctx, env, out, errOut); err != nil {
+			return err
+		}
+	}
 }
 
 // synced is the remote state a resync leaves for live mode.
@@ -60,7 +67,7 @@ func runResync(ctx context.Context, env *Env, localDir string, o Options, out, e
 	start := time.Now()
 	fmt.Fprintln(out, "resync: started")
 	s, err := pass(ctx, env, localDir, o, out, errOut, start, false)
-	if errors.Is(err, errBulk) {
+	if errors.Is(err, errBulk) && !env.client().Closed() { // a lost connection is the caller's
 		fmt.Fprintln(out, "resync: scanning the remote again after the failed bulk operation")
 		s, err = pass(ctx, env, localDir, o, out, errOut, start, true)
 	}
@@ -71,14 +78,15 @@ func runResync(ctx context.Context, env *Env, localDir string, o Options, out, e
 // right away: the remote snapshot is no longer trusted (invariant 2). On the last pass it
 // counts as a failed operation.
 func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut io.Writer, start time.Time, last bool) (*synced, error) {
-	if err := env.Client.ResetTmp(ctx, env.Root, !o.DryRun); err != nil {
+	client := env.client()
+	if err := client.ResetTmp(ctx, env.Root, !o.DryRun); err != nil {
 		return nil, err
 	}
 
 	var res remote.ScanResult
 	var scanErr error
 	var wg sync.WaitGroup
-	wg.Go(func() { res, scanErr = env.Client.Scan(ctx, env.Root, env.Stat, env.Ignore.PruneArgs(env.Root)) })
+	wg.Go(func() { res, scanErr = client.Scan(ctx, env.Root, env.Stat, env.Ignore.PruneArgs(env.Root)) })
 	local, skipped, err := localfs.Walk(localDir, env.Ignore)
 	wg.Wait()
 	if err != nil {
@@ -131,7 +139,7 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 		}
 		fmt.Fprintf(out, "dry run: %d operations, %d bytes to upload; nothing changed\n", len(p.Ops), size)
 	} else {
-		w, err := env.Client.Writer(env.Root)
+		w, err := client.Writer(env.Root)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +232,7 @@ func (x *executor) run(ctx context.Context, ops []plan.Op) int {
 	sem := make(chan struct{}, max(x.concurrency, 1))
 	var fmu sync.Mutex
 	for i, op := range ops {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || x.w.Closed() {
 			break
 		}
 		if op.Kind != plan.Upload {
@@ -258,7 +266,7 @@ func (x *executor) do(ctx context.Context, op plan.Op) bool {
 	var err error
 	for attempt := 0; ; attempt++ {
 		err = x.apply(op)
-		if err == nil || errors.Is(err, errStale) || errors.Is(err, remote.ErrNotEmpty) || ctx.Err() != nil || attempt == 3 {
+		if err == nil || errors.Is(err, errStale) || errors.Is(err, remote.ErrNotEmpty) || ctx.Err() != nil || x.w.Closed() || attempt == 3 {
 			break
 		}
 		select {
@@ -275,6 +283,9 @@ func (x *executor) do(ctx context.Context, op plan.Op) bool {
 		}
 		return true
 	case ctx.Err() != nil:
+		return false
+	case x.w.Closed(): // one connection message is enough; the reconnect resyncs everything
+		x.failed = append(x.failed, op.Path)
 		return false
 	case errors.Is(err, remote.ErrNotEmpty) && op.Kind == plan.Delete:
 		x.keep(op.Path)

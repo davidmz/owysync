@@ -52,7 +52,7 @@ func (x *executor) runPlan(ctx context.Context, ops []plan.Op, threshold int) (i
 		{"upload", create, x.bulkUpload},
 		{"delete", dels, func(ctx context.Context, ops []plan.Op) (int, error) { return x.bulkDelete(ctx, ops, false) }},
 	} {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || x.w.Closed() {
 			break
 		}
 		if threshold == 0 || len(s.ops) <= threshold {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"owysync/internal/config"
 	"owysync/internal/ignore"
@@ -18,12 +19,31 @@ import (
 type Env struct {
 	Cfg    *config.Config
 	Ignore *ignore.Set
-	Client *remote.Client
-	Root   string // canonical remote_root (realpath)
+	Client *remote.Client // replaced by a reconnect; read it through client() while syncing
+	Root   string         // canonical remote_root (realpath)
 	Stat   remote.StatVariant
+
+	mu sync.Mutex // guards Client during a sync: Ctrl+C closes it from another goroutine
 }
 
-func (e *Env) Close() error { return e.Client.Close() }
+// Close closes the current connection.
+func (e *Env) Close() error { return e.client().Close() }
+
+func (e *Env) client() *remote.Client {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.Client
+}
+
+func (e *Env) setClient(c *remote.Client) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Client = c
+}
+
+func connOptions(cfg *config.Config) remote.Options {
+	return remote.Options{Host: cfg.Host, Port: cfg.Port, User: cfg.User, IdentityFile: cfg.IdentityFile}
+}
 
 // Check runs checks 1-8 from spec §4.2 in order, printing one line per check to out
 // (`ok` or `FAIL: reason`). It stops at the first failure and returns the error; the
@@ -84,7 +104,7 @@ func check(ctx context.Context, localDir string, out io.Writer, last int) (*Env,
 	env.Cfg = cfg
 
 	// 2-4. TCP, host key, authentication: one call, the phase is taken from the error.
-	client, err := remote.Connect(ctx, remote.Options{Host: cfg.Host, Port: cfg.Port, User: cfg.User, IdentityFile: cfg.IdentityFile})
+	client, err := remote.Connect(ctx, connOptions(cfg))
 	steps := []struct {
 		stage remote.Stage
 		name  string

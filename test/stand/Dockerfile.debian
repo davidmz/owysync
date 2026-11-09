@@ -1,0 +1,11 @@
+FROM debian:12-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-server bash tcsh fish tar findutils coreutils \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /run/sshd \
+ && ssh-keygen -A
+COPY sshd_config /etc/ssh/sshd_config
+COPY users.sh entrypoint.sh /stand/
+COPY rc/ /stand/rc/
+RUN sh /stand/users.sh
+ENTRYPOINT ["sh", "/stand/entrypoint.sh"]

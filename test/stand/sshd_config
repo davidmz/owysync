@@ -1,0 +1,12 @@
+Port 22
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+UsePAM no
+# The entrypoint installs the key (a copy of the mounted .pub with proper permissions).
+AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+# The developer's ssh-agent may hold many keys.
+MaxAuthTries 20
+Subsystem sftp internal-sftp
+# Used to load .bashrc for bashuser on Alpine (see users.sh).
+PermitUserEnvironment yes

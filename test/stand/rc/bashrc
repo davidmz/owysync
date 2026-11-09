@@ -1,0 +1,4 @@
+# Noise like real .bashrc files: stdout output (including without a trailing newline) and an error on stderr.
+echo "bashrc: hello from a noisy rc file"
+printf 'prompt-without-newline '
+stty sane

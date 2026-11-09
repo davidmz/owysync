@@ -1,0 +1,2 @@
+echo "cshrc: hello from a noisy rc file"
+stty sane

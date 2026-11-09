@@ -1,0 +1,8 @@
+FROM alpine:3.20
+RUN apk add --no-cache openssh-server bash tcsh fish \
+ && ssh-keygen -A
+COPY sshd_config /etc/ssh/sshd_config
+COPY users.sh entrypoint.sh /stand/
+COPY rc/ /stand/rc/
+RUN sh /stand/users.sh
+ENTRYPOINT ["sh", "/stand/entrypoint.sh"]

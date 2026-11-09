@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	"owysync/internal/sound"
 	"owysync/internal/syncer"
 )
 
@@ -81,11 +82,15 @@ func run(args []string) int {
 		return 1
 	}
 	defer env.Close()
+	o := syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}
+	if env.Cfg.Sound {
+		o.Chime = func() { sound.Play(c.Once) }
+	}
 	sync := syncer.Live
 	if c.Once {
 		sync = syncer.Resync
 	}
-	if err := sync(ctx, env, dir, syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}, stdout, stderr); err != nil {
+	if err := sync(ctx, env, dir, o, stdout, stderr); err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(stderr, "owysync: interrupted")
 		} else if !errors.Is(err, syncer.ErrFailed) {

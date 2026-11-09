@@ -68,6 +68,7 @@ remote_root = %s
 # mtime_window = 0
 # concurrency = 64
 # bulk_threshold = 100
+# sound = on
 `, host, user, remoteRoot)
 }
 

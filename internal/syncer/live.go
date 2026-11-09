@@ -41,7 +41,7 @@ func Live(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 		return err
 	}
 	defer w.Close()
-	l := &live{env: env, localDir: localDir, verbose: o.Verbose, out: out, errOut: errOut,
+	l := &live{env: env, localDir: localDir, verbose: o.Verbose, chime: o.Chime, out: out, errOut: errOut,
 		debounce: time.Duration(env.Cfg.DebounceMS) * time.Millisecond,
 		dirty:    map[string]bool{}, failed: map[string]bool{}, wake: make(chan struct{}, 1)}
 	go l.collect(w.C)
@@ -52,6 +52,7 @@ type live struct {
 	env      *Env
 	localDir string
 	verbose  bool
+	chime    func()
 	out      io.Writer
 	errOut   io.Writer
 	debounce time.Duration
@@ -162,12 +163,12 @@ func (l *live) resync(ctx context.Context) error {
 	clear(l.dirty)
 	l.mu.Unlock()
 	clear(l.failed)
-	s, err := runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose}, l.out, l.errOut)
+	s, err := runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose, Chime: l.chime}, l.out, l.errOut)
 	for err != nil && lost(ctx, l.env) {
 		if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
 			return err
 		}
-		s, err = runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose}, l.out, l.errOut)
+		s, err = runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose, Chime: l.chime}, l.out, l.errOut)
 	}
 	if err != nil && !errors.Is(err, ErrFailed) {
 		return err
@@ -264,6 +265,9 @@ func (l *live) apply(ctx context.Context, dirty map[string]bool) bool {
 	if err != nil { // a failed bulk operation: the snapshot is not trusted (invariant 2)
 		fmt.Fprintln(l.errOut, "error:", err)
 		return true
+	}
+	if len(pl.Ops) > 0 && len(pl.Errors) == 0 && len(x.failed) == 0 && !x.stale && l.chime != nil {
+		l.chime()
 	}
 	if x.stale {
 		fmt.Fprintln(l.out, "resync: the remote changed behind our back; starting a full resync")

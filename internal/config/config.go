@@ -25,11 +25,12 @@ type Config struct {
 	DebounceMS    int
 	MTimeWindow   int // seconds
 	Concurrency   int
-	BulkThreshold int // 0 disables bulk mode
+	BulkThreshold int  // 0 disables bulk mode
+	Sound         bool // chime after a sync that changed the remote
 }
 
 func defaults() Config {
-	return Config{Port: 22, FileMode: 0o644, DirMode: 0o755, DebounceMS: 100, Concurrency: 64, BulkThreshold: 100}
+	return Config{Port: 22, FileMode: 0o644, DirMode: 0o755, DebounceMS: 100, Concurrency: 64, BulkThreshold: 100, Sound: true}
 }
 
 // Path returns the path of the config file in the local directory.
@@ -109,6 +110,15 @@ func Parse(text string) (*Config, error) {
 			c.Concurrency, err = parseInt(val, 1, 1<<31-1)
 		case "bulk_threshold":
 			c.BulkThreshold, err = parseInt(val, 0, 1<<31-1)
+		case "sound":
+			switch val {
+			case "on":
+				c.Sound = true
+			case "off":
+				c.Sound = false
+			default:
+				err = fmt.Errorf("expected on or off, got %q", val)
+			}
 		default:
 			err = errors.New("unknown key")
 		}

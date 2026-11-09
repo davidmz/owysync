@@ -11,7 +11,7 @@ func TestParseDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Config{Host: "example.org", Port: 22, User: "dev", RemoteRoot: "/srv/app",
-		FileMode: 0o644, DirMode: 0o755, DebounceMS: 100, Concurrency: 64, BulkThreshold: 100}
+		FileMode: 0o644, DirMode: 0o755, DebounceMS: 100, Concurrency: 64, BulkThreshold: 100, Sound: true}
 	if *c != want {
 		t.Fatalf("got %+v\nwant %+v", *c, want)
 	}
@@ -28,12 +28,13 @@ dir_mode = 0700
 debounce_ms = 5
 mtime_window = 2
 concurrency = 8
-bulk_threshold = 0`)
+bulk_threshold = 0
+sound = off`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Config{Host: "h", Port: 2222, User: "u", IdentityFile: `C:\keys\id`, RemoteRoot: "/r",
-		FileMode: 0o600, DirMode: 0o700, DebounceMS: 5, MTimeWindow: 2, Concurrency: 8, BulkThreshold: 0}
+		FileMode: 0o600, DirMode: 0o700, DebounceMS: 5, MTimeWindow: 2, Concurrency: 8, BulkThreshold: 0, Sound: false}
 	if *c != want {
 		t.Fatalf("got %+v\nwant %+v", *c, want)
 	}
@@ -80,6 +81,7 @@ func TestParseErrors(t *testing.T) {
 		{"mode too large", base + "dir_mode = 17777\n", "octal"},
 		{"concurrency 0", base + "concurrency = 0\n", "line 4"},
 		{"negative debounce", base + "debounce_ms = -1\n", "line 4"},
+		{"bad sound", base + "sound = yes\n", "on or off"},
 		{"bad host:port", "host = h:x\nuser = u\nremote_root = /r", "line 1"},
 	} {
 		_, err := Parse(tc.text)

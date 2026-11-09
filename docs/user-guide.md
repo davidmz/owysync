@@ -162,6 +162,7 @@ Lines of the form `key = value`. Lines starting with `#` are comments. Each key 
 | `mtime_window` | | `0` | Tolerance in seconds when comparing modification times. Use `2` if the local directory is on FAT |
 | `concurrency` | | `64` | Number of SFTP operations in flight at once |
 | `bulk_threshold` | | `100` | Uploads or deletes per batch at which bulk mode starts (see below). `0` turns bulk mode off |
+| `sound` | | `on` | `off` turns off the chime after a sync |
 
 Example:
 
@@ -286,6 +287,8 @@ Normal output goes to stdout:
 - `--dry-run` prints the operations it would perform and a closing `dry run: N operations, M bytes to upload; nothing changed`.
 
 Warnings and errors go to stderr, prefixed with `warning:` or `error:`.
+
+A short chime plays after every sync that changed the server without errors; a sync with nothing to do stays silent. Set `sound = off` in the config to turn it off.
 
 **Exit codes:** `0` means success; `1` means a failed check, a failed resync (`--once`), an interruption or an error; `2` means invalid command-line arguments.
 

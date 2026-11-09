@@ -23,8 +23,9 @@ import (
 
 // Options control a resync.
 type Options struct {
-	DryRun  bool // print the plan, change nothing
-	Verbose bool // print every operation
+	DryRun  bool   // print the plan, change nothing
+	Verbose bool   // print every operation
+	Chime   func() // called after a sync that changed the remote without errors; may be nil
 }
 
 // ErrFailed means the resync ran to the end but was not successful; the reasons are already printed.
@@ -174,6 +175,9 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 		return s, ErrFailed
 	}
 	fmt.Fprintf(out, "resync: done in %s: %d local files, %d operations\n", took, files, len(p.Ops))
+	if len(p.Ops) > 0 && !o.DryRun && o.Chime != nil {
+		o.Chime()
+	}
 	return s, nil
 }
 

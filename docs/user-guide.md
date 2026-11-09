@@ -51,7 +51,7 @@ owysync version
 Building from source needs Go (see `go.mod` for the version):
 
 ```bat
-go build -ldflags "-X main.version=0.1.0" -o owysync.exe ./cmd/owysync
+go build -o owysync.exe ./cmd/owysync
 ```
 
 ## Quick start

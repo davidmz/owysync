@@ -51,7 +51,7 @@ owysync version
 Для сборки из исходников нужен Go (версия указана в `go.mod`):
 
 ```bat
-go build -ldflags "-X main.version=0.1.0" -o owysync.exe ./cmd/owysync
+go build -o owysync.exe ./cmd/owysync
 ```
 
 ## Быстрый старт

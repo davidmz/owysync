@@ -30,8 +30,10 @@ owysync sync
 ## Building
 
 ```bat
-go build -ldflags "-X main.version=0.1.0" -o owysync.exe ./cmd/owysync
+go build -o owysync.exe ./cmd/owysync
 ```
+
+The version comes from git: a commit tagged `vX.Y.Z` builds as `vX.Y.Z`, any other commit as a Go pseudo-version, with `+dirty` for uncommitted changes. To release, tag the commit (`git tag v0.1.0`) and build.
 
 ## License
 

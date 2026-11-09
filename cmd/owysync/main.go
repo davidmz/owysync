@@ -9,13 +9,21 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 
 	"owysync/internal/sound"
 	"owysync/internal/syncer"
 )
 
-// version is set at build time: go build -ldflags "-X main.version=0.1.0".
-var version = "dev"
+// version is the main module version that go build stamps from the git tag
+// (v0.1.0 on a tagged commit, a pseudo-version otherwise, +dirty for uncommitted changes).
+// It is "dev" when the build has no VCS information.
+var version = func() string {
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "dev"
+}()
 
 func main() { os.Exit(run(os.Args[1:])) }
 

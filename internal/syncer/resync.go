@@ -45,6 +45,18 @@ func Resync(ctx context.Context, env *Env, localDir string, o Options, out, errO
 	defer context.AfterFunc(ctx, func() { env.Client.Close() })()
 
 	fmt.Fprintln(out, "resync: started")
+	err = pass(ctx, env, localDir, o, out, errOut, start, false)
+	if errors.Is(err, errBulk) {
+		fmt.Fprintln(out, "resync: scanning the remote again after the failed bulk operation")
+		err = pass(ctx, env, localDir, o, out, errOut, start, true)
+	}
+	return err
+}
+
+// pass is one scan-diff-apply round of Resync. Unless last, a bulk failure returns errBulk
+// right away: the remote snapshot is no longer trusted (invariant 2). On the last pass it
+// counts as a failed operation.
+func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut io.Writer, start time.Time, last bool) error {
 	if err := env.Client.ResetTmp(ctx, env.Root, !o.DryRun); err != nil {
 		return err
 	}
@@ -108,8 +120,16 @@ func Resync(ctx context.Context, env *Env, localDir string, o Options, out, errO
 		if err != nil {
 			return err
 		}
-		x := &executor{w: w, snap: rsnap, localDir: localDir, out: out, errOut: errOut, verbose: o.Verbose}
-		failed += x.run(ctx, p.Ops, cfg.Concurrency)
+		x := &executor{w: w, snap: rsnap, localDir: localDir, out: out, errOut: errOut, verbose: o.Verbose, concurrency: cfg.Concurrency}
+		n, err := x.runPlan(ctx, p.Ops, cfg.BulkThreshold)
+		failed += n
+		if err != nil && ctx.Err() == nil {
+			fmt.Fprintln(errOut, "error:", err)
+			if !last {
+				return err
+			}
+			failed++
+		}
 	}
 
 	if len(p.Unknown) > 0 {
@@ -151,23 +171,24 @@ func opLine(op plan.Op, rsnap tree.Snapshot) string {
 
 // executor applies plan operations and keeps the remote snapshot in step (invariant 2).
 type executor struct {
-	w        *remote.Writer
-	localDir string
-	out      io.Writer
-	errOut   io.Writer
-	verbose  bool
+	w           *remote.Writer
+	localDir    string
+	out         io.Writer
+	errOut      io.Writer
+	verbose     bool
+	concurrency int // uploads at a time
 
 	mu   sync.Mutex
 	snap tree.Snapshot
 	kept []string // directories left in place; their ancestors are not reported again
 }
 
-// run applies ops in order; consecutive uploads run up to concurrency at a time.
+// run applies ops one by one over SFTP; consecutive uploads run up to concurrency at a time.
 // It returns the number of failed operations.
-func (x *executor) run(ctx context.Context, ops []plan.Op, concurrency int) int {
+func (x *executor) run(ctx context.Context, ops []plan.Op) int {
 	failed := 0
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, max(concurrency, 1))
+	sem := make(chan struct{}, max(x.concurrency, 1))
 	var fmu sync.Mutex
 	for i, op := range ops {
 		if ctx.Err() != nil {
@@ -223,15 +244,21 @@ func (x *executor) do(ctx context.Context, op plan.Op) bool {
 	case ctx.Err() != nil:
 		return false
 	case errors.Is(err, remote.ErrNotEmpty) && op.Kind == plan.Delete:
-		if !slices.ContainsFunc(x.kept, func(k string) bool { return under(k, op.Path) }) {
-			fmt.Fprintf(x.out, "kept directory %s: it holds ignored files\n", op.Path)
-		}
-		x.kept = append(x.kept, op.Path)
+		x.keep(op.Path)
 		return true
 	}
 	x.kept = append(x.kept, op.Path) // a failed child makes its parent "not empty": not news
 	fmt.Fprintln(x.errOut, "error:", err)
 	return false
+}
+
+// keep reports a directory left in place because it holds ignored content (spec §9), once per
+// subtree: the parents of a kept directory are not news. The caller holds x.mu.
+func (x *executor) keep(p string) {
+	if !slices.ContainsFunc(x.kept, func(k string) bool { return under(k, p) }) {
+		fmt.Fprintf(x.out, "kept directory %s: it holds ignored files\n", p)
+	}
+	x.kept = append(x.kept, p)
 }
 
 func (x *executor) apply(op plan.Op) error {

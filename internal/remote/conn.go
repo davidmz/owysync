@@ -229,7 +229,8 @@ func (c *Client) Close() error {
 // SFTP opens the SFTP subsystem (once per connection).
 func (c *Client) SFTP() (*sftp.Client, error) {
 	if c.sftp == nil {
-		s, err := sftp.NewClient(c.ssh)
+		// Concurrent writes pipeline uploads: one large bulk part goes at link speed (spec §9.1).
+		s, err := sftp.NewClient(c.ssh, sftp.UseConcurrentWrites(true))
 		if err != nil {
 			return nil, fmt.Errorf("SFTP subsystem unavailable: %w", err)
 		}

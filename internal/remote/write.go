@@ -21,6 +21,7 @@ import (
 // Writer performs SFTP writes under the canonical root (spec §9). Paths are relative to the root.
 // It does not check the remote snapshot: the caller does (invariant 6).
 type Writer struct {
+	c     *Client // runs the bulk scripts
 	s     *sftp.Client
 	root  string
 	posix bool // posix-rename@openssh.com is supported
@@ -36,7 +37,7 @@ func (c *Client) Writer(root string) (*Writer, error) {
 		return nil, err
 	}
 	_, posix := s.HasExtension("posix-rename@openssh.com")
-	return &Writer{s: s, root: root, posix: posix, fallback: map[string]bool{}}, nil
+	return &Writer{c: c, s: s, root: root, posix: posix, fallback: map[string]bool{}}, nil
 }
 
 func (w *Writer) abs(rel string) string { return path.Join(w.root, rel) }

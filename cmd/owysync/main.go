@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -66,11 +67,17 @@ func run(args []string) int {
 		return 0
 	}
 
+	// A sync is a log: every line gets the time. The dry-run plan is not a log.
+	var stdout, stderr io.Writer = os.Stdout, os.Stderr
+	if !c.DryRun {
+		stdout, stderr = newStampWriter(os.Stdout), newStampWriter(os.Stderr)
+	}
+
 	// The check lines are noise for a sync; show them only when a check fails.
 	var checkOut bytes.Buffer
 	env, err := syncer.Check(ctx, dir, &checkOut)
 	if err != nil {
-		os.Stderr.Write(checkOut.Bytes())
+		stderr.Write(checkOut.Bytes())
 		return 1
 	}
 	defer env.Close()
@@ -78,11 +85,11 @@ func run(args []string) int {
 	if c.Once {
 		sync = syncer.Resync
 	}
-	if err := sync(ctx, env, dir, syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}, os.Stdout, os.Stderr); err != nil {
+	if err := sync(ctx, env, dir, syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}, stdout, stderr); err != nil {
 		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "owysync: interrupted")
+			fmt.Fprintln(stderr, "owysync: interrupted")
 		} else if !errors.Is(err, syncer.ErrFailed) {
-			fmt.Fprintln(os.Stderr, "owysync:", err)
+			fmt.Fprintln(stderr, "owysync:", err)
 		}
 		return 1
 	}

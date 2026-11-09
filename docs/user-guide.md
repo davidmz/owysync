@@ -273,13 +273,14 @@ The template from `owysync init` excludes version control directories (`.git`, `
 Normal output goes to stdout:
 
 ```text
-resync: started
-resync: done in 2.4s: 100000 local files, 0 operations
-+ src/new.php
-~ src/changed.php
-- src/removed.php
+[10:25:27] resync: started
+[10:25:29] resync: done in 2.4s: 100000 local files, 0 operations
+[10:46:44] + src/new.php
+[10:47:03] ~ src/changed.php
+[10:47:19] - src/removed.php
 ```
 
+- `owysync sync` starts every line, including warnings and errors, with the local time `[HH:MM:SS]`. The `--dry-run` plan has no timestamps.
 - `+` means created, `~` means updated, `-` means deleted.
 - Live mode prints every operation. A full resync prints only start and summary lines; add `-v` to see each of its operations.
 - `--dry-run` prints the operations it would perform and a closing `dry run: N operations, M bytes to upload; nothing changed`.

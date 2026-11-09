@@ -273,13 +273,14 @@ identity_file = C:\Users\alice\.ssh\id_ed25519
 Обычный вывод идёт в stdout:
 
 ```text
-resync: started
-resync: done in 2.4s: 100000 local files, 0 operations
-+ src/new.php
-~ src/changed.php
-- src/removed.php
+[10:25:27] resync: started
+[10:25:29] resync: done in 2.4s: 100000 local files, 0 operations
+[10:46:44] + src/new.php
+[10:47:03] ~ src/changed.php
+[10:47:19] - src/removed.php
 ```
 
+- `owysync sync` начинает каждую строку, включая предупреждения и ошибки, с местного времени `[ЧЧ:ММ:СС]`. План `--dry-run` печатается без времени.
 - `+` — создано, `~` — обновлено, `-` — удалено.
 - Live-режим печатает каждую операцию. Полный resync печатает только строки начала и итога; с `-v` видна каждая его операция.
 - `--dry-run` печатает операции, которые были бы выполнены, и итоговую строку `dry run: N operations, M bytes to upload; nothing changed`.

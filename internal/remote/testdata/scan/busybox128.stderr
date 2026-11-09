@@ -1,0 +1,3 @@
+owysync-scan-begin
+find: /srv/proj/rnox/child: Permission denied
+find: /srv/proj/locked: Permission denied

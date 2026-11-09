@@ -28,9 +28,6 @@ func run(args []string) int {
 		return 0
 	}
 	switch {
-	case c.Cmd == "init":
-		fmt.Fprintln(os.Stderr, "owysync: init is not implemented yet")
-		return 2
 	case c.Cmd == "" && !c.Once:
 		fmt.Fprintln(os.Stderr, "owysync: live mode is not implemented yet; use --once")
 		return 2
@@ -45,6 +42,23 @@ func run(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	if c.Cmd == "init" {
+		// The dialog needs a terminal; there is no non-interactive mode in the MVP (spec §4.1).
+		if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+			fmt.Fprintln(os.Stderr, "owysync: init is interactive and needs a terminal; run it in a console window")
+			return 1
+		}
+		if err := syncer.Init(ctx, dir, c.Remote, os.Stdin, os.Stdout); err != nil {
+			if ctx.Err() != nil {
+				fmt.Fprintln(os.Stderr, "owysync: interrupted")
+			} else if !errors.Is(err, syncer.ErrFailed) {
+				fmt.Fprintln(os.Stderr, "owysync:", err)
+			}
+			return 1
+		}
+		return 0
+	}
 
 	if c.Cmd == "check" {
 		env, err := syncer.Check(ctx, dir, os.Stdout) // the FAIL line already printed the reason

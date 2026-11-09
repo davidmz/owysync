@@ -153,13 +153,18 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 	return nil
 }
 
+// display quotes a name that contains control characters (a remote name with a newline).
+func display(p string) string {
+	if strings.ContainsFunc(p, unicode.IsControl) {
+		return strconv.Quote(p)
+	}
+	return p
+}
+
 // opLine renders an operation in the live output format (spec §11): + new, ~ replaced, - deleted.
 // A path with control characters (a remote name with a newline) is quoted.
 func opLine(op plan.Op, rsnap tree.Snapshot) string {
-	p := op.Path
-	if strings.ContainsFunc(p, unicode.IsControl) {
-		p = strconv.Quote(p)
-	}
+	p := display(op.Path)
 	switch {
 	case op.Kind == plan.Delete || op.Kind == plan.DeleteForTypeChange:
 		return "- " + p

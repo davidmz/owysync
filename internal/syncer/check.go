@@ -29,6 +29,17 @@ func (e *Env) Close() error { return e.Client.Close() }
 // (`ok` or `FAIL: reason`). It stops at the first failure and returns the error; the
 // FAIL line is already printed. On success it returns the open connection.
 func Check(ctx context.Context, localDir string, out io.Writer) (*Env, error) {
+	return check(ctx, localDir, out, 8)
+}
+
+// checkConnection runs checks 1-6 only (spec §4.1, step 4): init has not looked at remote_root yet,
+// so Env.Root stays empty.
+func checkConnection(ctx context.Context, localDir string, out io.Writer) (*Env, error) {
+	return check(ctx, localDir, out, 6)
+}
+
+// check runs the checks up to and including check number last.
+func check(ctx context.Context, localDir string, out io.Writer, last int) (*Env, error) {
 	env := &Env{}
 	ok := false
 	defer func() {
@@ -101,6 +112,11 @@ func Check(ctx context.Context, localDir string, out io.Writer) (*Env, error) {
 	env.Stat, err = client.Probe(ctx)
 	if report(6, "shell", env.Stat.String(), err) != nil {
 		return nil, err
+	}
+
+	if last < 7 {
+		ok = true
+		return env, nil
 	}
 
 	// 7. remote_root.

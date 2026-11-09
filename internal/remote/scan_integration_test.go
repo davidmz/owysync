@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"owysync/internal/ignore"
 	"owysync/internal/standtest"
 	"owysync/internal/tree"
 )
@@ -59,7 +60,11 @@ func TestScanStand(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				res, err := c.Scan(ctx, real, v, []string{"-o", "-name", "node_modules"})
+				ign, err := ignore.Parse("node_modules")
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := c.Scan(ctx, real, v, ign.PruneArgs(real))
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 
 	"owysync/internal/config"
+	"owysync/internal/ignore"
 	"owysync/internal/remote"
 )
 
 // Env is the result of a successful Check: the open connection and everything the checks found out.
 type Env struct {
 	Cfg    *config.Config
+	Ignore *ignore.Set
 	Client *remote.Client
 	Root   string // canonical remote_root (realpath)
 	Stat   remote.StatVariant
@@ -51,12 +53,18 @@ func Check(ctx context.Context, localDir string, out io.Writer) (*Env, error) {
 	if err == nil {
 		// A missing ignore file is an error: the first sync deletes everything on the remote
 		// that is not in local and not ignored, so the user must have decided on the masks.
-		// Mask parsing arrives with internal/ignore (stage 3): replace the read with ignore.Parse.
 		file := filepath.Join(localDir, config.Dir, "ignore")
-		if _, e := os.ReadFile(file); errors.Is(e, os.ErrNotExist) {
+		data, e := os.ReadFile(file)
+		switch {
+		case errors.Is(e, os.ErrNotExist):
 			err = fmt.Errorf("file %s not found; create it (an empty file is fine): the first sync deletes everything on the remote that is neither in local nor ignored", file)
-		} else if e != nil {
+		case e != nil:
 			err = fmt.Errorf("reading %s: %w", file, e)
+		default:
+			env.Ignore, e = ignore.Parse(string(data))
+			if e != nil {
+				err = fmt.Errorf("%s: %w; fix the mask (see the comments at the top of the file)", file, e)
+			}
 		}
 	}
 	if report(1, "config and ignore", "", err) != nil {

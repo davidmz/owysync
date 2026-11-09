@@ -197,7 +197,7 @@ func (o Options) explainHostKey(err error) error {
 // together with the agent keys, if any.
 func (o Options) signers(agentConn *io.Closer) ([]ssh.Signer, error) {
 	var signers []ssh.Signer
-	if f, err := os.OpenFile(AgentPipe, os.O_RDWR, 0); err == nil {
+	if f, err := os.OpenFile(AgentPipe, agentOpenFlags, 0); err == nil {
 		*agentConn = f // closed by Connect: signing happens during the handshake
 		signers, _ = agent.NewClient(f).Signers()
 	}

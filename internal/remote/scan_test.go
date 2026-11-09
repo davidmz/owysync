@@ -3,7 +3,10 @@ package remote
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -48,6 +51,60 @@ func TestParseScanGolden(t *testing.T) {
 			}
 			if want := []string{"rnox", "locked"}; !reflect.DeepEqual(res.Unreadable, want) {
 				t.Errorf("unreadable = %q, want %q", res.Unreadable, want)
+			}
+		})
+	}
+}
+
+// TestParseScanCaptured checks the fixtures recorded on real hosts by
+// kb/fixtures/probes/capture (FreeBSD and others): each <name>.meta holds the root, the stat
+// variant and the mtime of the tree. Directory sizes and symlink modes depend on the file
+// system and the OS, and the order on the directory layout, so they are not compared.
+func TestParseScanCaptured(t *testing.T) {
+	metas, _ := filepath.Glob("testdata/scan/*.meta")
+	for _, m := range metas {
+		name := strings.TrimSuffix(filepath.Base(m), ".meta")
+		t.Run(name, func(t *testing.T) {
+			read := func(ext string) []byte {
+				data, err := os.ReadFile("testdata/scan/" + name + ext)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return data
+			}
+			meta := map[string]string{}
+			for _, l := range strings.Split(string(read(".meta")), "\n") {
+				if k, v, ok := strings.Cut(l, "="); ok {
+					meta[k] = v
+				}
+			}
+			v := map[string]StatVariant{"gnu": StatGNU, "bsd": StatBSD}[meta["variant"]]
+			mtime, err := strconv.ParseInt(meta["mtime"], 10, 64)
+			if err != nil || v == 0 || meta["root"] == "" {
+				t.Fatalf("bad meta %q", meta)
+			}
+			res, err := ParseScan(read(".stdout"), read(".stderr"), meta["root"], v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			norm := func(es []tree.Entry) []tree.Entry {
+				es = slices.Clone(es)
+				for i := range es {
+					if es[i].Type == tree.Dir {
+						es[i].Size = 0
+					}
+					if es[i].Type == tree.Symlink {
+						es[i].Mode = 0
+					}
+				}
+				slices.SortFunc(es, func(a, b tree.Entry) int { return strings.Compare(a.Path, b.Path) })
+				return es
+			}
+			if got, want := norm(res.Entries), norm(scantestEntries(mtime)); !reflect.DeepEqual(got, want) {
+				t.Errorf("entries:\n got %+v\nwant %+v", got, want)
+			}
+			if got := slices.Sorted(slices.Values(res.Unreadable)); !slices.Equal(got, []string{"locked", "rnox"}) {
+				t.Errorf("unreadable = %q, want [locked rnox]", got)
 			}
 		})
 	}

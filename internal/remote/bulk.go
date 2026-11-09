@@ -121,6 +121,14 @@ func (w *Writer) RemoveList(ctx context.Context, files, dirs []string) (kept []s
 	return kept, nil
 }
 
+// harmlessTarWarning reports a GNU tar warning that is not an error for us: an mtime in the future
+// (clock skew between local and remote) and the hdrcharset PAX record, which GNU tar does not know
+// but which bsdtar needs to keep non-ASCII names (see rawName in syncer).
+func harmlessTarWarning(line string) bool {
+	return strings.Contains(line, "in the future") ||
+		strings.Contains(line, "unknown extended header keyword") && strings.Contains(line, "hdrcharset")
+}
+
 // run runs a bulk script that prints owysync-<name>-begin and -done markers and returns stdout
 // between them. Any stderr output after the marker is an error (spec §9.1, "Результат"), except
 // GNU tar's warning about mtimes in the future: a clock skew is not an error for us.
@@ -137,7 +145,7 @@ func (w *Writer) run(ctx context.Context, script, name string) ([]byte, error) {
 	}
 	var msgs []string
 	for _, line := range strings.Split(string(errBody), "\n") {
-		if line != "" && !strings.Contains(line, "in the future") {
+		if line != "" && !harmlessTarWarning(line) {
 			msgs = append(msgs, line)
 		}
 	}

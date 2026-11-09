@@ -1,0 +1,3 @@
+owysync-scan-begin
+find: /usr/home/david/owysync-scantest/locked: Permission denied
+stat: /usr/home/david/owysync-scantest/rnox/child: stat: Permission denied

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,10 @@ func TestWritePart(t *testing.T) {
 			e = tree.Entry{Path: h.Name[:len(h.Name)-1], Type: tree.Dir, Mode: uint32(h.Mode)}
 		} else if data, _ := io.ReadAll(tr); string(data) != files[h.Name] {
 			t.Errorf("%s: content %q", h.Name, data)
+		}
+		// bsdtar would turn non-ASCII names into '?' without this record (rawName).
+		if ascii := !strings.ContainsFunc(e.Path, func(r rune) bool { return r > 127 }); (h.PAXRecords["hdrcharset"] == "BINARY") == ascii {
+			t.Errorf("%s: hdrcharset record %q", e.Path, h.PAXRecords["hdrcharset"])
 		}
 		if d := path.Dir(e.Path); d != "." && !seen[d] && remote[d].Type != tree.Dir {
 			t.Errorf("%s comes before its directory %s", e.Path, d)

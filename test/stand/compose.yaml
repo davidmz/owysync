@@ -1,12 +1,15 @@
 # Start it through up.sh: it first creates the stand key in key/ (without it Docker
 # would create a directory in place of the file).
+# NET_ADMIN lets the benchmark add delay: tc qdisc replace dev eth0 root netem delay 50ms
 name: owysync-stand
 services:
   debian: # GNU coreutils, port 2201
     build: {context: ., dockerfile: Dockerfile.debian}
     ports: ["2201:22"]
+    cap_add: [NET_ADMIN]
     volumes: ["./key/id_ed25519.pub:/stand/id_ed25519.pub:ro"]
   alpine: # BusyBox, port 2202
     build: {context: ., dockerfile: Dockerfile.alpine}
     ports: ["2202:22"]
+    cap_add: [NET_ADMIN]
     volumes: ["./key/id_ed25519.pub:/stand/id_ed25519.pub:ro"]

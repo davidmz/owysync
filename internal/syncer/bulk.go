@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"owysync/internal/plan"
 	"owysync/internal/tree"
@@ -224,7 +225,7 @@ func writePart(tw *tar.Writer, localDir string, ops []plan.Op, view tree.Snapsho
 		line := opLine(op, view)
 		if op.Kind == plan.Mkdir {
 			e := tree.Entry{Path: op.Path, Type: tree.Dir, Mode: op.Mode}
-			h := &tar.Header{Typeflag: tar.TypeDir, Name: op.Path + "/", Mode: int64(op.Mode), ModTime: time.Unix(op.Local.MTime, 0)}
+			h := &tar.Header{Typeflag: tar.TypeDir, Name: op.Path + "/", Mode: int64(op.Mode), ModTime: time.Unix(op.Local.MTime, 0), PAXRecords: rawName(op.Path)}
 			if err := tw.WriteHeader(h); err != nil {
 				return i, p, err
 			}
@@ -262,7 +263,7 @@ func writeFile(tw *tar.Writer, localDir string, op plan.Op) (e tree.Entry, ok bo
 		return tree.Entry{}, false, nil
 	}
 	defer f.Close()
-	h := &tar.Header{Typeflag: tar.TypeReg, Name: op.Path, Size: before.Size, Mode: int64(op.Mode), ModTime: time.Unix(before.MTime, 0)}
+	h := &tar.Header{Typeflag: tar.TypeReg, Name: op.Path, Size: before.Size, Mode: int64(op.Mode), ModTime: time.Unix(before.MTime, 0), PAXRecords: rawName(op.Path)}
 	if err := tw.WriteHeader(h); err != nil {
 		return tree.Entry{}, false, err
 	}
@@ -275,6 +276,19 @@ func writeFile(tw *tar.Writer, localDir string, op plan.Op) (e tree.Entry, ok bo
 	e = tree.Entry{Path: op.Path, Type: tree.File, Size: before.Size, MTime: before.MTime, Mode: op.Mode}
 	after, err := lstatFile(full)
 	return e, n == before.Size && err == nil && after == before, nil
+}
+
+// rawName returns the PAX record hdrcharset=BINARY for a non-ASCII name. bsdtar (libarchive, FreeBSD)
+// otherwise converts UTF-8 names to the locale charset, and under LC_ALL=C it silently turns every
+// non-ASCII character into '?' (seen with libarchive 3.4.2 and 3.5.2): "кир" would land as "???".
+// With BINARY it takes the bytes as they are. GNU tar and BusyBox ignore the record.
+func rawName(name string) map[string]string {
+	for i := 0; i < len(name); i++ {
+		if name[i] >= utf8.RuneSelf {
+			return map[string]string{"hdrcharset": "BINARY"}
+		}
+	}
+	return nil
 }
 
 type zeros struct{}

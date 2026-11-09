@@ -31,3 +31,17 @@ func TestParseProbe(t *testing.T) {
 		}
 	}
 }
+
+func TestHarmlessTarWarning(t *testing.T) {
+	for line, want := range map[string]bool{
+		"tar: a.txt: time stamp 2030-01-01 00:00:00 is 1.5 s in the future": true,
+		"tar: Ignoring unknown extended header keyword 'hdrcharset'":        true,
+		"tar: Ignoring unknown extended header keyword `hdrcharset'":        true, // GNU tar before 1.28
+		"tar: Ignoring unknown extended header keyword 'SCHILY.fflags'":     false,
+		"tar: a.txt: Cannot open: Permission denied":                        false,
+	} {
+		if got := harmlessTarWarning(line); got != want {
+			t.Errorf("%q: %v, want %v", line, got, want)
+		}
+	}
+}

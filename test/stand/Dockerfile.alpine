@@ -1,5 +1,5 @@
 FROM alpine:3.20
-RUN apk add --no-cache openssh-server bash tcsh fish \
+RUN apk add --no-cache openssh-server bash tcsh fish iproute2-tc \
  && ssh-keygen -A
 COPY sshd_config /etc/ssh/sshd_config
 COPY users.sh entrypoint.sh /stand/

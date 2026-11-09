@@ -117,6 +117,8 @@ func (x *executor) bulkDelete(ctx context.Context, ops []plan.Op, typeChange boo
 // is extracted. Files that were locked or changed while being read go by SFTP afterwards.
 func (x *executor) bulkUpload(ctx context.Context, ops []plan.Op) (int, error) {
 	ops = archiveOrder(ops)
+	ra := newReadAhead(x.localDir, ops)
+	defer ra.stop()
 	x.mu.Lock()
 	view := maps.Clone(x.snap)
 	x.mu.Unlock()
@@ -142,7 +144,7 @@ func (x *executor) bulkUpload(ctx context.Context, ops []plan.Op) (int, error) {
 		rel, err := x.w.PutPart(func(w io.Writer) error {
 			tw := tar.NewWriter(w)
 			var err error
-			if n, part, err = writePart(tw, x.localDir, ops, view); err != nil {
+			if n, part, err = writePart(tw, x.localDir, ops, view, ra); err != nil {
 				return err
 			}
 			return tw.Close()
@@ -205,13 +207,18 @@ type opError struct {
 // writePart writes ops into tw until the part is full and returns how many ops it consumed.
 // view is the remote snapshot as it will be once the earlier parts are extracted; writePart
 // adds the directories it writes to it. A new directory is a separate entry with its mode,
-// before its contents (invariant 7), and every file header carries mode and mtime.
-func writePart(tw *tar.Writer, localDir string, ops []plan.Op, view tree.Snapshot) (int, tarPart, error) {
+// before its contents (invariant 7), and every file header carries mode and mtime. Files come
+// from ra (nil: read here); every upload op that writePart consumes takes its read from ra.
+func writePart(tw *tar.Writer, localDir string, ops []plan.Op, view tree.Snapshot, ra *readAhead) (int, tarPart, error) {
 	var p tarPart
 	var size int64
 	for i, op := range ops {
 		if len(p.entries) == partMaxEntries || size >= partMaxBytes {
 			return i, p, nil
+		}
+		var read fileRead
+		if op.Kind == plan.Upload {
+			read = ra.get(localDir, op.Path) // also for a skipped op: ra goes strictly in order
 		}
 		if err := checkParents(view, op.Path); err != nil {
 			p.errs = append(p.errs, opError{op.Path, err})
@@ -234,7 +241,7 @@ func writePart(tw *tar.Writer, localDir string, ops []plan.Op, view tree.Snapsho
 			size += 512
 			continue
 		}
-		e, ok, err := writeFile(tw, localDir, op)
+		e, ok, err := writeFile(tw, localDir, op, read)
 		if err != nil {
 			return i, p, err
 		}
@@ -249,21 +256,113 @@ func writePart(tw *tar.Writer, localDir string, ops []plan.Op, view tree.Snapsho
 	return len(ops), p, nil
 }
 
-// writeFile writes one local file into tw. ok is false when the file could not be opened (it is
-// left out) or changed while being read (its content in the archive is not trusted). An error
-// means the archive itself cannot be written.
-func writeFile(tw *tar.Writer, localDir string, op plan.Op) (e tree.Entry, ok bool, err error) {
-	full := filepath.Join(localDir, filepath.FromSlash(op.Path))
+// Read-ahead of bulk uploads: the first open of a fresh file is slow on Windows (the antivirus
+// scans it: ~1-5 ms), and in parallel it costs about 5 times less (measured with 8 readers).
+const (
+	readAheadFiles = 8       // files read ahead of the archive writer: open at most this many at once
+	readAheadMax   = 1 << 20 // larger files are not held in memory: the writer streams them itself
+)
+
+// fileRead is a file read ahead for the archive.
+type fileRead struct {
+	before fileStamp
+	data   []byte // the whole content of a small file
+	large  bool   // not read: the writer streams it
+	ok     bool   // read in full and unchanged meanwhile
+	err    error  // missing or locked: left out of the archive and sent by SFTP
+}
+
+// readAhead reads the files of upload ops in order, up to readAheadFiles ahead of the consumer.
+// Small files are read whole and closed at once, so few stay open while the archive is written.
+type readAhead struct {
+	res  map[string]chan fileRead
+	sem  chan struct{}
+	done chan struct{}
+}
+
+func newReadAhead(localDir string, ops []plan.Op) *readAhead {
+	ra := &readAhead{res: map[string]chan fileRead{}, sem: make(chan struct{}, readAheadFiles), done: make(chan struct{})}
+	var files []string
+	for _, op := range ops {
+		if op.Kind == plan.Upload {
+			ra.res[op.Path] = make(chan fileRead, 1)
+			files = append(files, op.Path)
+		}
+	}
+	go func() {
+		for _, p := range files {
+			select {
+			case ra.sem <- struct{}{}: // freed by get
+			case <-ra.done:
+				return
+			}
+			go func() { ra.res[p] <- readFile(localDir, p) }()
+		}
+	}()
+	return ra
+}
+
+// get returns the read of the file at p. The upload ops must be got in the order given to
+// newReadAhead, each once. A nil readAhead reads the file right here.
+func (ra *readAhead) get(localDir, p string) fileRead {
+	if ra == nil {
+		return readFile(localDir, p)
+	}
+	r := <-ra.res[p]
+	<-ra.sem
+	return r
+}
+
+// stop ends the read-ahead early; reads in flight finish on their own.
+func (ra *readAhead) stop() { close(ra.done) }
+
+func readFile(localDir, rel string) fileRead {
+	full := filepath.Join(localDir, filepath.FromSlash(rel))
 	before, err := lstatFile(full)
 	if err != nil {
+		return fileRead{err: err}
+	}
+	if before.Size > readAheadMax {
+		return fileRead{before: before, large: true}
+	}
+	data, err := os.ReadFile(full)
+	if err != nil { // locked by another process
+		return fileRead{err: err}
+	}
+	after, err := lstatFile(full)
+	return fileRead{before: before, data: data, ok: err == nil && after == before && int64(len(data)) == before.Size}
+}
+
+// writeFile writes one local file into tw from its read r. ok is false when the file could not be
+// opened (it is left out) or changed while being read (its content in the archive is not trusted).
+// An error means the archive itself cannot be written.
+func writeFile(tw *tar.Writer, localDir string, op plan.Op, r fileRead) (e tree.Entry, ok bool, err error) {
+	if r.err != nil {
 		return tree.Entry{}, false, nil
 	}
+	before := r.before
+	h := &tar.Header{Typeflag: tar.TypeReg, Name: op.Path, Size: before.Size, Mode: int64(op.Mode), ModTime: time.Unix(before.MTime, 0), PAXRecords: rawName(op.Path)}
+	e = tree.Entry{Path: op.Path, Type: tree.File, Size: before.Size, MTime: before.MTime, Mode: op.Mode}
+	if !r.large {
+		if err := tw.WriteHeader(h); err != nil {
+			return tree.Entry{}, false, err
+		}
+		n, err := tw.Write(r.data[:min(int64(len(r.data)), before.Size)])
+		if err != nil {
+			return tree.Entry{}, false, err
+		}
+		if _, err := io.CopyN(tw, zeros{}, before.Size-int64(n)); err != nil { // shrank: keep the archive valid
+			return tree.Entry{}, false, err
+		}
+		return e, r.ok, nil
+	}
+
+	full := filepath.Join(localDir, filepath.FromSlash(op.Path))
 	f, err := os.Open(full)
 	if err != nil { // locked by another process
 		return tree.Entry{}, false, nil
 	}
 	defer f.Close()
-	h := &tar.Header{Typeflag: tar.TypeReg, Name: op.Path, Size: before.Size, Mode: int64(op.Mode), ModTime: time.Unix(before.MTime, 0), PAXRecords: rawName(op.Path)}
 	if err := tw.WriteHeader(h); err != nil {
 		return tree.Entry{}, false, err
 	}
@@ -273,7 +372,6 @@ func writeFile(tw *tar.Writer, localDir string, op plan.Op) (e tree.Entry, ok bo
 			return tree.Entry{}, false, err
 		}
 	}
-	e = tree.Entry{Path: op.Path, Type: tree.File, Size: before.Size, MTime: before.MTime, Mode: op.Mode}
 	after, err := lstatFile(full)
 	return e, n == before.Size && err == nil && after == before, nil
 }

@@ -43,7 +43,7 @@ func netem(t *testing.T, target standtest.Target, delay time.Duration) {
 }
 
 // TestBench measures criteria 3, 4, 5 and the initial upload (spec §12) on a 100k-file tree
-// with RTT +50 ms, and the SFTP/bulk crossover. Run it on purpose:
+// with RTT +50 ms, and the SFTP/bulk crossover, and fails if a threshold of spec §12 is missed. Run it on purpose:
 //
 //	OWYSYNC_BENCH=1 go test -tags integration -run TestBench -v -timeout 2h ./internal/syncer/
 func TestBench(t *testing.T) {
@@ -172,18 +172,25 @@ func TestBench(t *testing.T) {
 		report("RTT (SFTP lstat, median of 10): %s", ds[5].Round(time.Millisecond))
 	}
 
-	// Initial upload without and with delay: bandwidth-bound means close times (criterion 5).
+	// Initial upload (criterion 5): the threshold is the speed with delay; the run without delay is
+	// for reference only (the stand's link is local, so the ratio measures the SSH window).
 	rtt()
 	fast := once("initial upload, no delay")
 	wipe()
 	netem(t, target, delay)
 	rtt()
 	slow := once("initial upload, +50 ms")
-	report("initial upload: %.0f MB/s with delay, %.2fx the time without", float64(total)/(1<<20)/slow.Seconds(), slow.Seconds()/fast.Seconds())
+	speed := float64(total) / (1 << 20) / slow.Seconds()
+	report("initial upload: %.0f MB/s with delay, %.2fx the time without", speed, slow.Seconds()/fast.Seconds())
+	if speed < 15 {
+		t.Errorf("criterion 5: initial upload at %.0f MB/s, want at least 15", speed)
+	}
 
 	// Criterion 3: a cold resync (new process: check + resync) without changes.
 	for i := range 3 {
-		once(fmt.Sprintf("cold resync without changes #%d", i+1))
+		if d := once(fmt.Sprintf("cold resync without changes #%d", i+1)); d > 5*time.Second {
+			t.Errorf("criterion 3: cold resync took %s, want at most 5s", d)
+		}
 	}
 
 	// SFTP vs bulk for n changed files (bulk_threshold crossover).
@@ -238,6 +245,9 @@ func TestBench(t *testing.T) {
 	}
 	slices.Sort(saves)
 	report("live save of one file (criterion 4): median %s, max %s", saves[len(saves)/2].Round(time.Millisecond), saves[len(saves)-1].Round(time.Millisecond))
+	if saves[len(saves)-1] >= time.Second {
+		t.Errorf("criterion 4: a save took %s, want under 1s", saves[len(saves)-1])
+	}
 
 	start = time.Now()
 	git("checkout", "-q", "two")
@@ -250,6 +260,9 @@ func TestBench(t *testing.T) {
 	})
 	report("git checkout of %d changes (criterion 5): checkout took %s, remote matched %s after its start (%d bulk phases)",
 		changed, checkout.Round(100*time.Millisecond), converged.Round(time.Second), strings.Count(out.String(), "bulk "))
+	if converged > time.Minute {
+		t.Errorf("criterion 5: the remote matched %s after the checkout started, want at most 1m", converged)
+	}
 }
 
 func lastLine(s string) string {

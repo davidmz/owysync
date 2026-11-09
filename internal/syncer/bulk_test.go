@@ -27,6 +27,7 @@ func TestWritePart(t *testing.T) {
 	files := map[string]string{
 		"a.txt": "a", "a-b/x": "dash sorts before slash", "a/b/c.txt": "deep", "a/z": "z",
 		"кириллица/файл.txt": "ru", "old/keep.txt": "replaced", "empty.txt": "",
+		"big.bin": strings.Repeat("b", readAheadMax+1), // streamed, not read ahead
 	}
 	for name, data := range files {
 		full := filepath.Join(dir, filepath.FromSlash(name))
@@ -57,7 +58,9 @@ func TestWritePart(t *testing.T) {
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	n, part, err := writePart(tw, dir, ops, maps.Clone(remote))
+	ra := newReadAhead(dir, ops)
+	defer ra.stop()
+	n, part, err := writePart(tw, dir, ops, maps.Clone(remote), ra)
 	if err != nil || n != len(ops) || len(part.errs)+len(part.retry) > 0 {
 		t.Fatalf("writePart: n=%d of %d, %+v, %v", n, len(ops), part, err)
 	}
@@ -138,17 +141,17 @@ func TestWritePartLimits(t *testing.T) {
 	}
 	ops = append([]plan.Op{{Kind: plan.Mkdir, Path: "d", Mode: 0o755}}, ops...)
 	view := tree.Snapshot{}
-	n, part, err := writePart(tar.NewWriter(io.Discard), "", ops, view)
+	n, part, err := writePart(tar.NewWriter(io.Discard), "", ops, view, nil)
 	if err != nil || n != partMaxEntries || len(part.entries) != partMaxEntries {
 		t.Fatalf("first part: n=%d, %d entries, %v", n, len(part.entries), err)
 	}
-	n, part, err = writePart(tar.NewWriter(io.Discard), "", ops[n:], view)
+	n, part, err = writePart(tar.NewWriter(io.Discard), "", ops[n:], view, nil)
 	if err != nil || n != 2 || len(part.entries) != 2 || len(part.errs) != 0 {
 		t.Fatalf("second part: n=%d, %+v, %v", n, part, err)
 	}
 	// Invariant 6: a parent that is a symlink on the remote stops the entry.
 	view = tree.Snapshot{"l": {Path: "l", Type: tree.Symlink}}
-	_, part, _ = writePart(tar.NewWriter(io.Discard), "", []plan.Op{{Kind: plan.Mkdir, Path: "l/x"}}, view)
+	_, part, _ = writePart(tar.NewWriter(io.Discard), "", []plan.Op{{Kind: plan.Mkdir, Path: "l/x"}}, view, nil)
 	if len(part.errs) != 1 || len(part.entries) != 0 {
 		t.Errorf("symlink parent: %+v", part)
 	}
@@ -158,7 +161,8 @@ func TestWritePartLimits(t *testing.T) {
 func TestWriteFileMissing(t *testing.T) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	_, ok, err := writeFile(tw, t.TempDir(), plan.Op{Kind: plan.Upload, Path: "gone"})
+	dir := t.TempDir()
+	_, ok, err := writeFile(tw, dir, plan.Op{Kind: plan.Upload, Path: "gone"}, readFile(dir, "gone"))
 	if ok || err != nil {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}

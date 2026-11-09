@@ -19,8 +19,8 @@ owysync init
 Review `.owysync\ignore`. The first sync deletes everything on the server that is not in the local directory and not ignored. Then preview and run:
 
 ```bat
-owysync --once --dry-run
-owysync
+owysync sync --once --dry-run
+owysync sync
 ```
 
 ## Documentation
@@ -58,8 +58,8 @@ owysync init
 Проверьте `.owysync\ignore`: первая синхронизация удаляет на сервере всё, чего нет в локальном каталоге и что не исключено. Затем посмотрите план и запустите:
 
 ```bat
-owysync --once --dry-run
-owysync
+owysync sync --once --dry-run
+owysync sync
 ```
 
 ### Документация

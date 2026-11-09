@@ -45,7 +45,7 @@ Files are compared by **type, size and modification time** (to the second). Cont
 Put `owysync.exe` anywhere on your `PATH`. There is no installer. Check it with:
 
 ```bat
-owysync --version
+owysync version
 ```
 
 Building from source needs Go (see `go.mod` for the version):
@@ -76,33 +76,32 @@ go build -ldflags "-X main.version=0.1.0" -o owysync.exe ./cmd/owysync
 4. Look at what the first sync is going to do:
 
    ```bat
-   owysync --once --dry-run
+   owysync sync --once --dry-run
    ```
 
 5. Start syncing:
 
    ```bat
-   owysync
+   owysync sync
    ```
 
    Stop with Ctrl+C.
 
 ## Commands
 
-Every command takes an optional path to the local directory. Without it, the current directory is used. A relative path is resolved from the current directory. The directory must exist. `.owysync\` is looked up only in that directory, never in its parents. Flags can go before or after the path.
+The command always comes first. Every command except `help` and `version` takes an optional path to the local directory. Without it, the current directory is used. A relative path is resolved from the current directory. The directory must exist. `.owysync\` is looked up only in that directory, never in its parents. Flags can go before or after the path.
 
 | Command | What it does |
 | --- | --- |
 | `owysync [path]` | Full resync, then live mode until Ctrl+C |
 | `owysync --once [path]` | Full resync only. Exit code 0 means success |
-| `owysync --once --dry-run [path]` | Prints the planned operations and a summary line. Changes nothing |
+| `owysync sync --once --dry-run [path]` | Prints the planned operations and a summary line. Changes nothing |
 | `owysync init [path]` | Interactive setup |
 | `owysync init --remote [path]` | Only the remote part of setup, for an existing local config |
 | `owysync check [path]` | Checks the setup without writing anything |
-| `owysync --version` | Prints the version |
-| `-v` | Also prints every operation of a full resync |
-
-If your directory is really called `init` or `check`, prefix it: `owysync .\check`.
+| `owysync version` | Prints the version |
+| `owysync help` | Prints the version and a short help. Same as `owysync` without arguments or `owysync --help` |
+| `owysync sync -v [path]` | Also prints every operation of a full resync |
 
 `--dry-run` works only together with `--once`.
 

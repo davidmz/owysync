@@ -23,14 +23,14 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "owysync:", err)
 		return 2
 	}
-	if c.Version {
+	switch c.Cmd {
+	case "version":
 		fmt.Println("owysync", version)
 		return 0
-	}
-	switch {
-	case c.DryRun && !c.Once:
-		fmt.Fprintln(os.Stderr, "owysync: --dry-run works only with --once")
-		return 2
+	case "help":
+		fmt.Println("owysync", version)
+		fmt.Print(usage)
+		return 0
 	}
 	dir, err := localDir(c.Path)
 	if err != nil {

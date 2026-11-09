@@ -56,7 +56,7 @@ func writeLocal(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-// resync runs check and resync on a fresh connection, like `owysync --once -v`.
+// resync runs check and resync on a fresh connection, like `owysync sync --once -v`.
 func resync(t *testing.T, ctx context.Context, dir string, o Options) (out, errOut string, err error) {
 	t.Helper()
 	var ob, eb bytes.Buffer

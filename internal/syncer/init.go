@@ -224,7 +224,7 @@ func Init(ctx context.Context, localDir string, remoteOnly bool, in io.Reader, o
 
 	// 6. Summary.
 	fmt.Fprintf(out, "\nDone. Before the first sync, review %s: the first sync deletes everything on the remote that is neither in the local directory nor ignored (for example node_modules, uploads, logs).\n", filepath.Join(dir, "ignore"))
-	fmt.Fprintf(out, "Then look at the plan: owysync --once --dry-run \"%s\"\n", localDir)
+	fmt.Fprintf(out, "Then look at the plan: owysync sync --once --dry-run \"%s\"\n", localDir)
 	return nil
 }
 

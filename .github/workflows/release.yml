@@ -1,0 +1,26 @@
+# Builds owysync.exe for a pushed vX.Y.Z tag and publishes it as a GitHub release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # go build stamps the version from the tag
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: go build -trimpath -o owysync.exe ./cmd/owysync
+      - run: ./owysync.exe version
+      - run: gh release create "$env:GITHUB_REF_NAME" owysync.exe --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

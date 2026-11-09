@@ -38,9 +38,13 @@ func walkPaths(t *testing.T, root, masks string) (tree.Snapshot, []string, []str
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, warnings, err := Walk(root, ign)
+	snap, skipped, err := Walk(root, ign)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var warnings []string
+	for _, s := range skipped {
+		warnings = append(warnings, s.String())
 	}
 	var paths []string
 	for p := range snap {

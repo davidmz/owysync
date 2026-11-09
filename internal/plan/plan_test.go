@@ -69,15 +69,15 @@ func TestDiff(t *testing.T) {
 			ops: []string{"delete-for-type-change x", "mkdir x 755", "upload x/f 644"}},
 		{name: "dir to file deletes contents bottom-up first", local: snap(file("x", 1, 1)),
 			remote: snap(dir("x"), dir("x/a"), file("x/a/f", 1, 1), file("x/g", 1, 1)),
-			ops: []string{"delete-for-type-change x/g", "delete-for-type-change x/a/f", "delete-for-type-change x/a", "delete-for-type-change x", "upload x 644"}},
+			ops:    []string{"delete-for-type-change x/g", "delete-for-type-change x/a/f", "delete-for-type-change x/a", "delete-for-type-change x", "upload x 644"}},
 		{name: "symlink to file", local: snap(file("l", 1, 1)), remote: snap(typed("l", tree.Symlink)),
 			ops: []string{"delete-for-type-change l", "upload l 644"}},
 		{name: "remote-only file, dir and symlink deleted bottom-up", local: snap(),
 			remote: snap(dir("d"), file("d/f", 1, 1), typed("d/l", tree.Symlink), file("g", 1, 1)),
-			ops: []string{"delete g", "delete d/l", "delete d/f", "delete d"}},
+			ops:    []string{"delete g", "delete d/l", "delete d/f", "delete d"}},
 		{name: "remote-only other warns and pins its parent", local: snap(),
 			remote: snap(dir("run"), typed("run/php.sock", tree.Other), file("run/pid", 1, 1)),
-			ops: []string{"delete run/pid"}, warnings: 1},
+			ops:    []string{"delete run/pid"}, warnings: 1},
 		{name: "other against local object is an error", local: snap(file("s", 1, 1)), remote: snap(typed("s", tree.Other)), errors: 1},
 		{name: "dir with other cannot become a file", local: snap(file("run", 1, 1)),
 			remote: snap(dir("run"), typed("run/s", tree.Other)), warnings: 1, errors: 1},
@@ -99,7 +99,7 @@ func TestDiff(t *testing.T) {
 			ops: []string{"upload foo 644", "delete Foo"}},
 		{name: "full order", local: snap(file("t", 1, 1), dir("n"), file("n/f", 1, 1)),
 			remote: snap(dir("t"), file("t/x", 1, 1), file("old", 1, 1)),
-			ops: []string{"delete-for-type-change t/x", "delete-for-type-change t", "mkdir n 755", "upload n/f 644", "upload t 644", "delete old"}},
+			ops:    []string{"delete-for-type-change t/x", "delete-for-type-change t", "mkdir n 755", "upload n/f 644", "upload t 644", "delete old"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

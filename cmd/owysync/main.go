@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -25,11 +27,17 @@ func run(args []string) int {
 		fmt.Println("owysync", version)
 		return 0
 	}
-	if c.Cmd != "check" {
-		fmt.Fprintln(os.Stderr, "owysync: this command is not implemented yet")
+	switch {
+	case c.Cmd == "init":
+		fmt.Fprintln(os.Stderr, "owysync: init is not implemented yet")
+		return 2
+	case c.Cmd == "" && !c.Once:
+		fmt.Fprintln(os.Stderr, "owysync: live mode is not implemented yet; use --once")
+		return 2
+	case c.DryRun && !c.Once:
+		fmt.Fprintln(os.Stderr, "owysync: --dry-run works only with --once")
 		return 2
 	}
-
 	dir, err := localDir(c.Path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "owysync:", err)
@@ -37,11 +45,32 @@ func run(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	env, err := syncer.Check(ctx, dir, os.Stdout) // the FAIL line already printed the reason
+
+	if c.Cmd == "check" {
+		env, err := syncer.Check(ctx, dir, os.Stdout) // the FAIL line already printed the reason
+		if err != nil {
+			return 1
+		}
+		env.Close()
+		return 0
+	}
+
+	// The check lines are noise for a sync; show them only when a check fails.
+	var checkOut bytes.Buffer
+	env, err := syncer.Check(ctx, dir, &checkOut)
 	if err != nil {
+		os.Stderr.Write(checkOut.Bytes())
 		return 1
 	}
-	env.Close()
+	defer env.Close()
+	if err := syncer.Resync(ctx, env, dir, syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}, os.Stdout, os.Stderr); err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "owysync: interrupted")
+		} else if !errors.Is(err, syncer.ErrFailed) {
+			fmt.Fprintln(os.Stderr, "owysync:", err)
+		}
+		return 1
+	}
 	return 0
 }
 

@@ -12,11 +12,20 @@ import (
 	"owysync/internal/tree"
 )
 
+// Skipped is a local path that Walk left out and that must count as ignored (spec §2, 5):
+// the remote object at this path, if any, must not be deleted.
+type Skipped struct {
+	Path   string
+	Reason string
+}
+
+func (s Skipped) String() string { return fmt.Sprintf("skipped %q: %s", s.Path, s.Reason) }
+
 // Walk scans the local tree under root. Excluded directories are not entered; .owysync/ is
 // always skipped. Symlinks, junctions and other special objects, and names with unpaired UTF-16
-// surrogates are skipped with a warning and count as ignored. Any read error fails the walk:
+// surrogates are reported in skipped and never entered. Any read error fails the walk:
 // a missing part of local would turn into deletions on the remote.
-func Walk(root string, ign *ignore.Set) (snap tree.Snapshot, warnings []string, err error) {
+func Walk(root string, ign *ignore.Set) (snap tree.Snapshot, skipped []Skipped, err error) {
 	snap = tree.Snapshot{}
 	err = filepath.WalkDir(root, func(full string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -38,7 +47,7 @@ func Walk(root string, ign *ignore.Set) (snap tree.Snapshot, warnings []string, 
 		}
 		// Go keeps unpaired surrogates as WTF-8, which is not valid UTF-8.
 		if !utf8.ValidString(rel) {
-			warnings = append(warnings, fmt.Sprintf("skipped %q: the name has an unpaired UTF-16 surrogate and cannot be converted to UTF-8; rename it", rel))
+			skipped = append(skipped, Skipped{rel, "the name has an unpaired UTF-16 surrogate and cannot be converted to UTF-8; rename it"})
 			return skip()
 		}
 		if rel == ".owysync" || ign.ExcludedName(rel) {
@@ -58,7 +67,7 @@ func Walk(root string, ign *ignore.Set) (snap tree.Snapshot, warnings []string, 
 		case m.IsRegular():
 			e.Type, e.Size = tree.File, info.Size()
 		default:
-			warnings = append(warnings, fmt.Sprintf("skipped %s: symlinks, junctions and special files are not synced; add the path to .owysync/ignore to silence this", rel))
+			skipped = append(skipped, Skipped{rel, "symlinks, junctions and special files are not synced; add the path to .owysync/ignore to silence this"})
 			return skip() // a junction may look like a directory: never enter it
 		}
 		snap[rel] = e
@@ -67,5 +76,5 @@ func Walk(root string, ign *ignore.Set) (snap tree.Snapshot, warnings []string, 
 	if err != nil {
 		return nil, nil, err
 	}
-	return snap, warnings, nil
+	return snap, skipped, nil
 }

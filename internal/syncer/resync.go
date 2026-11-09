@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,7 +36,6 @@ var errStale = errors.New("the remote snapshot is stale; run again")
 // Resync runs one full resync (spec §6) over a checked environment. Progress goes to out,
 // warnings and errors to errOut. It returns nil only when the resync was successful.
 func Resync(ctx context.Context, env *Env, localDir string, o Options, out, errOut io.Writer) error {
-	start := time.Now()
 	lock, err := localfs.Lock(localDir)
 	if err != nil {
 		return err
@@ -44,21 +44,35 @@ func Resync(ctx context.Context, env *Env, localDir string, o Options, out, errO
 	// Ctrl+C: closing the connection aborts every SFTP call in flight (spec §4).
 	defer context.AfterFunc(ctx, func() { env.Client.Close() })()
 
+	_, err = runResync(ctx, env, localDir, o, out, errOut)
+	return err
+}
+
+// synced is the remote state a resync leaves for live mode.
+type synced struct {
+	x       *executor // holds the remote snapshot and the paths whose operations failed
+	unknown []string  // non-ignored unreadable remote directories
+}
+
+// runResync is Resync without the lock. On success and on ErrFailed it returns the remote state
+// (with a nil executor on a dry run).
+func runResync(ctx context.Context, env *Env, localDir string, o Options, out, errOut io.Writer) (*synced, error) {
+	start := time.Now()
 	fmt.Fprintln(out, "resync: started")
-	err = pass(ctx, env, localDir, o, out, errOut, start, false)
+	s, err := pass(ctx, env, localDir, o, out, errOut, start, false)
 	if errors.Is(err, errBulk) {
 		fmt.Fprintln(out, "resync: scanning the remote again after the failed bulk operation")
-		err = pass(ctx, env, localDir, o, out, errOut, start, true)
+		s, err = pass(ctx, env, localDir, o, out, errOut, start, true)
 	}
-	return err
+	return s, err
 }
 
 // pass is one scan-diff-apply round of Resync. Unless last, a bulk failure returns errBulk
 // right away: the remote snapshot is no longer trusted (invariant 2). On the last pass it
 // counts as a failed operation.
-func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut io.Writer, start time.Time, last bool) error {
+func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut io.Writer, start time.Time, last bool) (*synced, error) {
 	if err := env.Client.ResetTmp(ctx, env.Root, !o.DryRun); err != nil {
-		return err
+		return nil, err
 	}
 
 	var res remote.ScanResult
@@ -68,10 +82,10 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 	local, skipped, err := localfs.Walk(localDir, env.Ignore)
 	wg.Wait()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if scanErr != nil {
-		return scanErr
+		return nil, scanErr
 	}
 
 	// Skipped local paths count as ignored (spec §2, 5): hide them from the remote side too.
@@ -106,6 +120,7 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 	}
 	failed := len(p.Errors)
 
+	s := &synced{unknown: unknown}
 	if o.DryRun {
 		var size int64
 		for _, op := range p.Ops {
@@ -118,15 +133,16 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 	} else {
 		w, err := env.Client.Writer(env.Root)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		x := &executor{w: w, snap: rsnap, localDir: localDir, out: out, errOut: errOut, verbose: o.Verbose, concurrency: cfg.Concurrency}
+		s.x = x
 		n, err := x.runPlan(ctx, p.Ops, cfg.BulkThreshold)
 		failed += n
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintln(errOut, "error:", err)
 			if !last {
-				return err
+				return nil, err
 			}
 			failed++
 		}
@@ -144,13 +160,13 @@ func pass(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 	took := time.Since(start).Round(time.Millisecond)
 	switch {
 	case ctx.Err() != nil:
-		return ctx.Err()
+		return nil, ctx.Err()
 	case failed > 0 || len(p.Unknown) > 0:
 		fmt.Fprintf(out, "resync: failed in %s: %d local files, %d operations, %d errors, %d unreadable directories\n", took, files, len(p.Ops), failed, len(p.Unknown))
-		return ErrFailed
+		return s, ErrFailed
 	}
 	fmt.Fprintf(out, "resync: done in %s: %d local files, %d operations\n", took, files, len(p.Ops))
-	return nil
+	return s, nil
 }
 
 // display quotes a name that contains control characters (a remote name with a newline).
@@ -183,9 +199,21 @@ type executor struct {
 	verbose     bool
 	concurrency int // uploads at a time
 
-	mu   sync.Mutex
-	snap tree.Snapshot
-	kept []string // directories left in place; their ancestors are not reported again
+	mu     sync.Mutex
+	snap   tree.Snapshot
+	kept   []string // directories left in place; their ancestors are not reported again
+	failed []string // paths whose operations failed; live mode retries them (spec §7)
+	stale  bool     // an operation found the remote snapshot out of date (spec §7)
+}
+
+// fail reports a failed operation on p. The caller holds x.mu.
+func (x *executor) fail(p string, err error) {
+	fmt.Fprintln(x.errOut, "error:", err)
+	// A missing parent whose own operation failed in this run says nothing about the remote.
+	if errors.Is(err, errStale) && !slices.ContainsFunc(x.failed, func(f string) bool { return under(p, f) }) {
+		x.stale = true
+	}
+	x.failed = append(x.failed, p)
 }
 
 // run applies ops one by one over SFTP; consecutive uploads run up to concurrency at a time.
@@ -253,7 +281,7 @@ func (x *executor) do(ctx context.Context, op plan.Op) bool {
 		return true
 	}
 	x.kept = append(x.kept, op.Path) // a failed child makes its parent "not empty": not news
-	fmt.Fprintln(x.errOut, "error:", err)
+	x.fail(op.Path, err)
 	return false
 }
 
@@ -282,7 +310,7 @@ func (x *executor) apply(op plan.Op) error {
 		x.set(op.Path, nil)
 	case plan.Mkdir:
 		if err := x.w.Mkdir(op.Path, op.Mode); err != nil {
-			return err
+			return remoteErr(err)
 		}
 		x.set(op.Path, &tree.Entry{Path: op.Path, Type: tree.Dir, Mode: op.Mode})
 	case plan.Upload:
@@ -318,7 +346,7 @@ func (x *executor) upload(op plan.Op) (tree.Entry, error) {
 	}
 	defer f.Close()
 	if err := x.w.Upload(op.Path, f, op.Mode, before.MTime); err != nil {
-		return tree.Entry{}, err
+		return tree.Entry{}, remoteErr(err)
 	}
 	after, err := lstatFile(full)
 	if err != nil {
@@ -328,6 +356,15 @@ func (x *executor) upload(op plan.Op) (tree.Entry, error) {
 		return tree.Entry{}, fmt.Errorf("%s changed during upload", full)
 	}
 	return tree.Entry{Path: op.Path, Type: tree.File, Size: before.Size, MTime: before.MTime, Mode: op.Mode}, nil
+}
+
+// remoteErr marks a remote "no such file" or "already exists" as errStale: the snapshot said
+// otherwise (spec §7). Only errors of remote calls go through it, never local ones.
+func remoteErr(err error) error {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%w (%w)", err, errStale)
+	}
+	return err
 }
 
 type fileStamp struct{ Size, MTime int64 }

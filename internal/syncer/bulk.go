@@ -80,7 +80,7 @@ func (x *executor) bulkDelete(ctx context.Context, ops []plan.Op, typeChange boo
 	var todo []plan.Op
 	for _, op := range ops {
 		if err := checkParents(x.snap, op.Path); err != nil {
-			fmt.Fprintln(x.errOut, "error:", err)
+			x.fail(op.Path, err)
 			failed++
 			continue
 		}
@@ -103,7 +103,7 @@ func (x *executor) bulkDelete(ctx context.Context, ops []plan.Op, typeChange boo
 			}
 			delete(x.snap, op.Path)
 		case typeChange:
-			fmt.Fprintf(x.errOut, "error: cannot replace the remote directory %s: it holds ignored files\n", op.Path)
+			x.fail(op.Path, fmt.Errorf("cannot replace the remote directory %s: it holds ignored files", op.Path))
 			failed++
 		default:
 			x.keep(op.Path)
@@ -153,9 +153,11 @@ func (x *executor) bulkUpload(ctx context.Context, ops []plan.Op) (int, error) {
 			return failed, err
 		}
 		ops = ops[n:]
+		x.mu.Lock()
 		for _, e := range part.errs {
-			fmt.Fprintln(x.errOut, "error:", e)
+			x.fail(e.path, e.err)
 		}
+		x.mu.Unlock()
 		failed += len(part.errs)
 		retry = append(retry, part.retry...)
 		ch := make(chan error, 1)
@@ -191,7 +193,12 @@ type tarPart struct {
 	entries []tree.Entry // in the archive; they enter the snapshot once the part is extracted
 	lines   []string     // output line of each entry
 	retry   []plan.Op    // files locked or changed while being read: they go by SFTP
-	errs    []error      // operations the snapshot does not allow; left out
+	errs    []opError    // operations the snapshot does not allow; left out
+}
+
+type opError struct {
+	path string
+	err  error
 }
 
 // writePart writes ops into tw until the part is full and returns how many ops it consumed.
@@ -206,12 +213,12 @@ func writePart(tw *tar.Writer, localDir string, ops []plan.Op, view tree.Snapsho
 			return i, p, nil
 		}
 		if err := checkParents(view, op.Path); err != nil {
-			p.errs = append(p.errs, err)
+			p.errs = append(p.errs, opError{op.Path, err})
 			continue
 		}
 		r, exists := view[op.Path]
 		if exists && (op.Kind == plan.Mkdir || r.Type != tree.File) {
-			p.errs = append(p.errs, fmt.Errorf("%s: a %s is in the way on the remote: %w", op.Path, r.Type, errStale))
+			p.errs = append(p.errs, opError{op.Path, fmt.Errorf("%s: a %s is in the way on the remote: %w", op.Path, r.Type, errStale)})
 			continue
 		}
 		line := opLine(op, view)

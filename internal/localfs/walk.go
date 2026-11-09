@@ -26,9 +26,20 @@ func (s Skipped) String() string { return fmt.Sprintf("skipped %q: %s", s.Path, 
 // surrogates are reported in skipped and never entered. Any read error fails the walk:
 // a missing part of local would turn into deletions on the remote.
 func Walk(root string, ign *ignore.Set) (snap tree.Snapshot, skipped []Skipped, err error) {
+	return WalkUnder(root, "", ign)
+}
+
+// WalkUnder is Walk limited to the relative path sub and its subtree (live mode, spec §7); paths
+// stay relative to root. sub itself is included; a missing sub gives an empty snapshot. The caller
+// makes sure sub's ancestors are not excluded.
+func WalkUnder(root, sub string, ign *ignore.Set) (snap tree.Snapshot, skipped []Skipped, err error) {
 	snap = tree.Snapshot{}
-	err = filepath.WalkDir(root, func(full string, d fs.DirEntry, err error) error {
+	start := filepath.Join(root, filepath.FromSlash(sub))
+	err = filepath.WalkDir(start, func(full string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if sub != "" && full == start && errors.Is(err, fs.ErrNotExist) {
+				return nil // deleted: nothing to sync here
+			}
 			return fmt.Errorf("reading %s: %w", full, err)
 		}
 		if full == root {

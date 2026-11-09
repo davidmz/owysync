@@ -119,8 +119,12 @@ func (w *Writer) upload(tmpRel, rel string, src io.Reader, mode uint32, mtime in
 }
 
 // Mkdir creates rel and sets its mode explicitly: the server applies its umask to mkdir (spec §9).
+// If rel already exists, the error wraps fs.ErrExist (SFTP v3 reports only a generic failure).
 func (w *Writer) Mkdir(rel string, mode uint32) error {
 	if err := w.s.Mkdir(w.abs(rel)); err != nil {
+		if _, serr := w.s.Lstat(w.abs(rel)); serr == nil {
+			err = fmt.Errorf("%w: %w", fs.ErrExist, err)
+		}
 		return fmt.Errorf("mkdir %s: %w", rel, err)
 	}
 	if err := w.s.Chmod(w.abs(rel), os.FileMode(mode)); err != nil {

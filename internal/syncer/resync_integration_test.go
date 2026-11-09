@@ -86,6 +86,17 @@ func connect(t *testing.T, dir string) *Env {
 // Directories in kept may stay on remote only: they hold ignored content.
 func assertMatch(t *testing.T, env *Env, dir string, kept ...string) {
 	t.Helper()
+	for _, d := range treeDiff(t, env, dir, true, kept...) {
+		t.Error(d)
+	}
+}
+
+// treeDiff lists the differences between the non-ignored remote tree and local: type, size,
+// mtime and, if content, the data of every file.
+func treeDiff(t *testing.T, env *Env, dir string, content bool, kept ...string) []string {
+	t.Helper()
+	var diffs []string
+	add := func(format string, a ...any) { diffs = append(diffs, fmt.Sprintf(format, a...)) }
 	local, _, err := localfs.Walk(dir, env.Ignore)
 	if err != nil {
 		t.Fatal(err)
@@ -105,25 +116,25 @@ func assertMatch(t *testing.T, env *Env, dir string, kept ...string) {
 		r, ok := remote[p]
 		switch {
 		case !ok:
-			t.Errorf("%q missing on remote", p)
+			add("%q missing on remote", p)
 			continue
 		case r.Type != l.Type:
-			t.Errorf("%q: remote %s, local %s", p, r.Type, l.Type)
+			add("%q: remote %s, local %s", p, r.Type, l.Type)
 			continue
 		case l.Type == tree.File && (r.Size != l.Size || r.MTime != l.MTime):
-			t.Errorf("%q: remote size %d mtime %d, local %d %d", p, r.Size, r.MTime, l.Size, l.MTime)
+			add("%q: remote size %d mtime %d, local %d %d", p, r.Size, r.MTime, l.Size, l.MTime)
 		}
-		if l.Type == tree.File {
+		if content && l.Type == tree.File {
 			want, _ := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p)))
 			f, err := s.Open(path.Join(env.Root, p))
 			if err != nil {
-				t.Errorf("%q: %v", p, err)
+				add("%q: %v", p, err)
 				continue
 			}
 			got, _ := io.ReadAll(f)
 			f.Close()
 			if !bytes.Equal(got, want) {
-				t.Errorf("%q: content differs", p)
+				add("%q: content differs", p)
 			}
 		}
 		delete(remote, p)
@@ -132,8 +143,9 @@ func assertMatch(t *testing.T, env *Env, dir string, kept ...string) {
 		delete(remote, k)
 	}
 	for p := range remote {
-		t.Errorf("%q is on remote only", p)
+		add("%q is on remote only", p)
 	}
+	return diffs
 }
 
 func TestResyncStand(t *testing.T) {

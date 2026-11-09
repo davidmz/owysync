@@ -28,9 +28,6 @@ func run(args []string) int {
 		return 0
 	}
 	switch {
-	case c.Cmd == "" && !c.Once:
-		fmt.Fprintln(os.Stderr, "owysync: live mode is not implemented yet; use --once")
-		return 2
 	case c.DryRun && !c.Once:
 		fmt.Fprintln(os.Stderr, "owysync: --dry-run works only with --once")
 		return 2
@@ -77,7 +74,11 @@ func run(args []string) int {
 		return 1
 	}
 	defer env.Close()
-	if err := syncer.Resync(ctx, env, dir, syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}, os.Stdout, os.Stderr); err != nil {
+	sync := syncer.Live
+	if c.Once {
+		sync = syncer.Resync
+	}
+	if err := sync(ctx, env, dir, syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}, os.Stdout, os.Stderr); err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "owysync: interrupted")
 		} else if !errors.Is(err, syncer.ErrFailed) {

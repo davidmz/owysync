@@ -1,10 +1,12 @@
 package localfs
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +94,29 @@ func TestWalkMTime(t *testing.T) {
 func TestWalkMissingRoot(t *testing.T) {
 	if _, _, err := Walk(filepath.Join(t.TempDir(), "none"), &ignore.Set{}); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+func TestWalkUnder(t *testing.T) {
+	root := t.TempDir()
+	mkTree(t, root, "a/b/c.txt", "a/b/skip.log", "a/b/d/", "a/other.txt", "top.txt")
+	ign, err := ignore.Parse("*.log\n/a/b/d\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ sub, want string }{
+		{"a/b", "a/b a/b/c.txt"}, // root-anchored mask a/b/d still applies
+		{"a/b/c.txt", "a/b/c.txt"},
+		{"a/none", ""},
+		{"top.txt/x", ""}, // parent is a file
+	} {
+		snap, _, err := WalkUnder(root, tc.sub, ign)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.sub, err)
+		}
+		got := slices.Sorted(maps.Keys(snap))
+		if want := strings.Fields(tc.want); !slices.Equal(got, want) {
+			t.Errorf("%s: got %v, want %v", tc.sub, got, want)
+		}
 	}
 }

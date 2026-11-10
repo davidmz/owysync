@@ -292,6 +292,8 @@ A short chime plays after every sync that changed the server without errors; a s
 
 While `owysync sync` runs in live mode, an icon in the notification area shows its state: grey while it starts, green while it waits for changes, bright green during a sync, red after an error or while the connection is lost. Windows 11 may put a new icon under the ^ arrow; drag it to the taskbar to keep it in sight.
 
+Started from Explorer or a shortcut, `owysync sync` runs in a window of its own (a classic console window, even where Windows Terminal is the default terminal). The window stays open until the first full resync succeeds and then hides in the tray; minimizing it hides it again. Click the icon to show the window. If the sync stops with an error, the window waits for Enter so that the error can be read. Started from a terminal, the window is left alone, and a click on the icon brings that terminal to the front.
+
 **Exit codes:** `0` means success; `1` means a failed check, a failed resync (`--once`), an interruption or an error; `2` means invalid command-line arguments.
 
 ## Errors and recovery

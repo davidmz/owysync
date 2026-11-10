@@ -13,3 +13,9 @@ func (i *Icon) Set(s State) {}
 
 // Close does nothing.
 func (i *Icon) Close() {}
+
+// OwnsConsole reports false outside Windows.
+func OwnsConsole() bool { return false }
+
+// RelaunchInConhost does nothing outside Windows.
+func RelaunchInConhost() bool { return false }

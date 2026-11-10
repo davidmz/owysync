@@ -27,9 +27,20 @@ var version = func() string {
 	return "dev"
 }()
 
-func main() { os.Exit(run(os.Args[1:])) }
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // SIGTERM: the console window was closed
+	code := run(ctx, os.Args[1:])
+	interrupted := ctx.Err() != nil
+	stop() // cancels ctx; from here Ctrl+C and the close button end the process at once
+	if code != 0 && !interrupted && tray.OwnsConsole() {
+		// The window closes with the process: keep the error on screen.
+		fmt.Fprint(os.Stderr, "Press Enter to close this window")
+		os.Stdin.Read(make([]byte, 1)) // a console reads a whole line
+	}
+	os.Exit(code)
+}
 
-func run(args []string) int {
+func run(ctx context.Context, args []string) int {
 	c, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "owysync:", err)
@@ -49,8 +60,10 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "owysync:", err)
 		return 1
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // SIGTERM: the console window was closed
-	defer stop()
+	live := c.Cmd == "sync" && !c.Once && !c.DryRun
+	if live && tray.RelaunchInConhost() {
+		return 0 // the sync goes on in a window that can hide in the tray
+	}
 
 	if c.Cmd == "init" {
 		// The dialog needs a terminal; there is no non-interactive mode in the MVP (spec §4.1).
@@ -86,8 +99,8 @@ func run(args []string) int {
 
 	// The tray icon shows how a live sync goes; it is grey while the check connects.
 	var icon *tray.Icon
-	if !c.Once && !c.DryRun {
-		if icon, err = tray.Start("owysync " + filepath.Base(dir)); err != nil {
+	if live {
+		if icon, err = tray.Start("owysync: " + filepath.Base(dir)); err != nil {
 			fmt.Fprintln(stderr, "warning: no tray icon:", err)
 		}
 		defer icon.Close()

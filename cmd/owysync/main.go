@@ -10,9 +10,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"syscall"
 
 	"owysync/internal/sound"
 	"owysync/internal/syncer"
+	"owysync/internal/tray"
 )
 
 // version is the main module version that go build stamps from the git tag
@@ -47,7 +49,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "owysync:", err)
 		return 1
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // SIGTERM: the console window was closed
 	defer stop()
 
 	if c.Cmd == "init" {
@@ -82,6 +84,15 @@ func run(args []string) int {
 		stdout, stderr = newStampWriter(os.Stdout), newStampWriter(os.Stderr)
 	}
 
+	// The tray icon shows how a live sync goes; it is grey while the check connects.
+	var icon *tray.Icon
+	if !c.Once && !c.DryRun {
+		if icon, err = tray.Start("owysync " + filepath.Base(dir)); err != nil {
+			fmt.Fprintln(stderr, "warning: no tray icon:", err)
+		}
+		defer icon.Close()
+	}
+
 	// The check lines are noise for a sync; show them only when a check fails.
 	var checkOut bytes.Buffer
 	env, err := syncer.Check(ctx, dir, &checkOut)
@@ -90,7 +101,7 @@ func run(args []string) int {
 		return 1
 	}
 	defer env.Close()
-	o := syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose}
+	o := syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose, State: icon.Set}
 	if env.Cfg.Sound {
 		o.Chime = func() { sound.Play(c.Once) }
 	}

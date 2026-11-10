@@ -290,6 +290,8 @@ Warnings and errors go to stderr, prefixed with `warning:` or `error:`.
 
 A short chime plays after every sync that changed the server without errors; a sync with nothing to do stays silent. Set `sound = off` in the config to turn it off.
 
+While `owysync sync` runs in live mode, an icon in the notification area shows its state: grey while it starts, green while it waits for changes, bright green during a sync, red after an error or while the connection is lost. Windows 11 may put a new icon under the ^ arrow; drag it to the taskbar to keep it in sight.
+
 **Exit codes:** `0` means success; `1` means a failed check, a failed resync (`--once`), an interruption or an error; `2` means invalid command-line arguments.
 
 ## Errors and recovery

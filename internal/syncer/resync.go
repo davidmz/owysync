@@ -18,14 +18,16 @@ import (
 	"owysync/internal/localfs"
 	"owysync/internal/plan"
 	"owysync/internal/remote"
+	"owysync/internal/tray"
 	"owysync/internal/tree"
 )
 
 // Options control a resync.
 type Options struct {
-	DryRun  bool   // print the plan, change nothing
-	Verbose bool   // print every operation
-	Chime   func() // called after a sync that changed the remote without errors; may be nil
+	DryRun  bool             // print the plan, change nothing
+	Verbose bool             // print every operation
+	Chime   func()           // called after a sync that changed the remote without errors; may be nil
+	State   func(tray.State) // called by Live when the sync state changes; may be nil
 }
 
 // ErrFailed means the resync ran to the end but was not successful; the reasons are already printed.

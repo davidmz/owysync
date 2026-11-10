@@ -14,6 +14,7 @@ import (
 
 	"owysync/internal/localfs"
 	"owysync/internal/plan"
+	"owysync/internal/tray"
 	"owysync/internal/tree"
 	"owysync/internal/watch"
 )
@@ -41,7 +42,7 @@ func Live(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 		return err
 	}
 	defer w.Close()
-	l := &live{env: env, localDir: localDir, verbose: o.Verbose, chime: o.Chime, out: out, errOut: errOut,
+	l := &live{env: env, localDir: localDir, verbose: o.Verbose, chime: o.Chime, state: o.State, out: out, errOut: errOut,
 		debounce: time.Duration(env.Cfg.DebounceMS) * time.Millisecond,
 		dirty:    map[string]bool{}, failed: map[string]bool{}, wake: make(chan struct{}, 1)}
 	go l.collect(w.C)
@@ -53,6 +54,7 @@ type live struct {
 	localDir string
 	verbose  bool
 	chime    func()
+	state    func(tray.State)
 	out      io.Writer
 	errOut   io.Writer
 	debounce time.Duration
@@ -124,7 +126,7 @@ func (l *live) loop(ctx context.Context) error {
 					return ctx.Err()
 				}
 				if l.s.x.w.Closed() { // the batch saw the connection go
-					if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
+					if err := l.reconnect(ctx); err != nil {
 						return err
 					}
 					needResync = true
@@ -139,7 +141,7 @@ func (l *live) loop(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
+			if err := l.reconnect(ctx); err != nil {
 				return err
 			}
 			needResync = true
@@ -163,11 +165,13 @@ func (l *live) resync(ctx context.Context) error {
 	clear(l.dirty)
 	l.mu.Unlock()
 	clear(l.failed)
+	l.set(tray.Syncing)
 	s, err := runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose, Chime: l.chime}, l.out, l.errOut)
 	for err != nil && lost(ctx, l.env) {
-		if err := reconnect(ctx, l.env, l.out, l.errOut); err != nil {
+		if err := l.reconnect(ctx); err != nil {
 			return err
 		}
+		l.set(tray.Syncing)
 		s, err = runResync(ctx, l.env, l.localDir, Options{Verbose: l.verbose, Chime: l.chime}, l.out, l.errOut)
 	}
 	if err != nil && !errors.Is(err, ErrFailed) {
@@ -178,7 +182,29 @@ func (l *live) resync(ctx context.Context) error {
 		l.failed[p] = true
 	}
 	l.s = s
+	l.settle(err != nil)
 	return nil
+}
+
+func (l *live) set(s tray.State) {
+	if l.state != nil {
+		l.state(s)
+	}
+}
+
+// settle shows the state after a sync: an error while it ran or a path waiting for a retry is a failure.
+func (l *live) settle(bad bool) {
+	if bad || len(l.failed) > 0 {
+		l.set(tray.Failed)
+	} else {
+		l.set(tray.Idle)
+	}
+}
+
+// reconnect shows the lost connection and replaces it.
+func (l *live) reconnect(ctx context.Context) error {
+	l.set(tray.Failed)
+	return reconnect(ctx, l.env, l.out, l.errOut)
 }
 
 // due returns when the pending batch must be processed: after debounce of quiet, but at most
@@ -208,6 +234,8 @@ func (l *live) take() map[string]bool {
 // and compared with the snapshot under it (spec §7). It reports whether the snapshot turned out
 // to be stale, so that a full resync must follow.
 func (l *live) apply(ctx context.Context, dirty map[string]bool) bool {
+	bad := false
+	defer func() { l.settle(bad) }()
 	x := l.s.x
 	x.failed, x.stale, x.kept = nil, false, nil
 	scopes := map[string]bool{}
@@ -239,6 +267,7 @@ func (l *live) apply(ctx context.Context, dirty map[string]bool) bool {
 	if len(scopes) == 0 {
 		return false
 	}
+	l.set(tray.Syncing)
 
 	// ponytail: scans the whole snapshot per batch (~10 ms at 200k paths); index by directory if it shows up.
 	remote := tree.Snapshot{}
@@ -254,6 +283,7 @@ func (l *live) apply(ctx context.Context, dirty map[string]bool) bool {
 	}
 	for _, e := range pl.Errors {
 		fmt.Fprintln(l.errOut, "error:", e)
+		bad = true
 	}
 	_, err := x.runPlan(ctx, pl.Ops, cfg.BulkThreshold)
 	for _, p := range x.failed {
@@ -264,6 +294,7 @@ func (l *live) apply(ctx context.Context, dirty map[string]bool) bool {
 	}
 	if err != nil { // a failed bulk operation: the snapshot is not trusted (invariant 2)
 		fmt.Fprintln(l.errOut, "error:", err)
+		bad = true
 		return true
 	}
 	if len(pl.Ops) > 0 && len(pl.Errors) == 0 && len(x.failed) == 0 && !x.stale && l.chime != nil {

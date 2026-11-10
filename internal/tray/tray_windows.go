@@ -31,17 +31,26 @@ var (
 	postQuitMessage   = user32.NewProc("PostQuitMessage")
 	createIconFromRes = user32.NewProc("CreateIconFromResourceEx")
 	destroyIcon       = user32.NewProc("DestroyIcon")
+	createPopupMenu   = user32.NewProc("CreatePopupMenu")
+	appendMenu        = user32.NewProc("AppendMenuW")
+	setMenuDefault    = user32.NewProc("SetMenuDefaultItem")
+	trackPopupMenu    = user32.NewProc("TrackPopupMenu")
+	destroyMenu       = user32.NewProc("DestroyMenu")
+	getCursorPos      = user32.NewProc("GetCursorPos")
 	shellNotifyIcon   = windows.NewLazySystemDLL("shell32.dll").NewProc("Shell_NotifyIconW")
 	circleFiles       = [...]string{Starting: "circle-gray.png", Idle: "circle-green.png", Syncing: "circle-green-flash.png", Failed: "circle-red.png"}
 	minSyncing        = 500 * time.Millisecond // a short sync still shows as a visible flash
+	minShown          = 3 * time.Second        // the own console stays open at least this long
 )
 
 const (
 	nimAdd, nimModify, nimDelete = 0, 1, 2
 	nifMessage, nifIcon, nifTip  = 0x1, 0x2, 0x4
-	hwndMessage                  = ^uintptr(2) // HWND_MESSAGE: a message-only window
-	wmDestroy, wmClose           = 0x0002, 0x0010
-	wmLButtonUp                  = 0x0202
+	wmNull, wmDestroy, wmClose   = 0x0000, 0x0002, 0x0010
+	wmLButtonUp, wmRButtonUp     = 0x0202, 0x0205
+	mfString, mfSeparator        = 0x0, 0x800
+	tpmRightButton, tpmReturnCmd = 0x2, 0x100
+	cmdShow, cmdExit             = 1, 2
 	wmTrayIcon                   = 0x8000 + 1 // WM_APP + 1: the shell reports mouse events on the icon with it
 )
 
@@ -71,11 +80,23 @@ type msg struct {
 
 var wndProcCallback = windows.NewCallback(wndProc)
 
-// wndProc handles the messages of the icon's window: a click on the icon shows the console.
+// onExit is the Exit command of the icon's menu; there is one icon per process.
+var onExit func()
+
+// wndProc handles the messages of the icon's window: a click on the icon shows the console,
+// a right click opens the menu.
 func wndProc(wnd windows.HWND, m uint32, wParam, lParam uintptr) uintptr {
 	switch {
 	case m == wmTrayIcon && lParam == wmLButtonUp:
 		showConsole()
+		return 0
+	case m == wmTrayIcon && lParam == wmRButtonUp:
+		switch menu(uintptr(wnd)) {
+		case cmdShow:
+			showConsole()
+		case cmdExit:
+			onExit()
+		}
 		return 0
 	case m == wmDestroy:
 		postQuitMessage.Call(0)
@@ -83,6 +104,31 @@ func wndProc(wnd windows.HWND, m uint32, wParam, lParam uintptr) uintptr {
 	}
 	r, _, _ := defWindowProc.Call(uintptr(wnd), uintptr(m), wParam, lParam)
 	return r
+}
+
+// menu shows the icon's menu at the cursor and returns the chosen command, 0 if none.
+func menu(wnd uintptr) uintptr {
+	m, _, _ := createPopupMenu.Call()
+	if m == 0 {
+		return 0
+	}
+	defer destroyMenu.Call(m)
+	for _, it := range []struct {
+		flags, cmd uintptr
+		text       string
+	}{{mfString, cmdShow, "Show"}, {mfSeparator, 0, ""}, {mfString, cmdExit, "Exit"}} {
+		t, _ := windows.UTF16PtrFromString(it.text)
+		appendMenu.Call(m, it.flags, it.cmd, uintptr(unsafe.Pointer(t)))
+	}
+	setMenuDefault.Call(m, cmdShow, 0) // bold: what a left click does
+	var pt struct{ X, Y int32 }
+	getCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+	// The window must be in the foreground, or the menu stays open after a click elsewhere;
+	// the posted message lets the menu close properly (both per the TrackPopupMenu docs).
+	setForegroundWindow.Call(wnd)
+	cmd, _, _ := trackPopupMenu.Call(m, tpmRightButton|tpmReturnCmd, uintptr(pt.X), uintptr(pt.Y), 0, wnd, 0)
+	postMessage.Call(wnd, wmNull, 0, 0)
+	return cmd
 }
 
 type notifyIconData struct {
@@ -115,16 +161,19 @@ type Icon struct {
 	light   bool // the icons are for a light taskbar
 	idled   bool // Idle was shown: the first sync succeeded and the own console is hidden
 	tip     string
+	start   time.Time // when Start ran
 	shown   State
 	want    State
 	since   time.Time   // when Syncing was shown
 	pending *time.Timer // pending switch away from Syncing
 }
 
-// Start adds the icon in the Starting state; tip heads its tooltip.
-func Start(tip string) (*Icon, error) {
+// Start adds the icon in the Starting state; tip heads its tooltip. The Exit command of the
+// icon's menu calls exit.
+func Start(tip string, exit func()) (*Icon, error) {
+	onExit = exit
 	setTitle(tip)
-	i := &Icon{tip: tip, light: lightTaskbar()}
+	i := &Icon{tip: tip, light: lightTaskbar(), start: time.Now()}
 	var err error
 	if i.icons, err = makeIcons(i.light); err != nil {
 		return nil, err
@@ -141,6 +190,8 @@ func Start(tip string) (*Icon, error) {
 
 // run creates the icon's window and adds the icon, reports that to started, and then
 // dispatches the window's messages until Close. A window belongs to the thread that made it.
+// It is a hidden top-level window, not a message-only one: those cannot take the foreground,
+// which the menu needs.
 func (i *Icon) run(started chan<- error) {
 	runtime.LockOSThread()
 	cls, _ := windows.UTF16PtrFromString("OwySyncTray")
@@ -148,7 +199,7 @@ func (i *Icon) run(started chan<- error) {
 	wc := wndClassEx{WndProc: wndProcCallback, Instance: windows.Handle(instance), ClassName: cls}
 	wc.Size = uint32(unsafe.Sizeof(wc))
 	registerClassEx.Call(uintptr(unsafe.Pointer(&wc))) // fails harmlessly when registered by an earlier Start
-	wnd, _, err := createWindowEx.Call(0, uintptr(unsafe.Pointer(cls)), 0, 0, 0, 0, 0, 0, hwndMessage, 0, instance, 0)
+	wnd, _, err := createWindowEx.Call(0, uintptr(unsafe.Pointer(cls)), 0, 0, 0, 0, 0, 0, 0, 0, instance, 0)
 	if wnd == 0 {
 		started <- fmt.Errorf("CreateWindowEx: %w", err)
 		return
@@ -252,7 +303,7 @@ func (i *Icon) show(s State) {
 	setConsoleIcon(i.icons[s])
 	if s == Idle && !i.idled {
 		i.idled = true
-		hideConsole()
+		time.AfterFunc(minShown-time.Since(i.start), hideConsole) // a quick connect does not just flash the window
 	}
 }
 

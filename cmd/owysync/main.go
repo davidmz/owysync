@@ -29,18 +29,19 @@ var version = func() string {
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // SIGTERM: the console window was closed
-	code := run(ctx, os.Args[1:])
+	code := run(ctx, stop, os.Args[1:])
 	interrupted := ctx.Err() != nil
 	stop() // cancels ctx; from here Ctrl+C and the close button end the process at once
-	if code != 0 && !interrupted && tray.OwnsConsole() {
-		// The window closes with the process: keep the error on screen.
+	if !interrupted && tray.OwnsConsole() {
+		// The window closes with the process: keep the help, the result or the error on screen.
 		fmt.Fprint(os.Stderr, "Press Enter to close this window")
 		os.Stdin.Read(make([]byte, 1)) // a console reads a whole line
 	}
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string) int {
+// run runs the command in args; exit cancels ctx, as Ctrl+C does.
+func run(ctx context.Context, exit func(), args []string) int {
 	c, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "owysync:", err)
@@ -62,7 +63,7 @@ func run(ctx context.Context, args []string) int {
 	}
 	live := c.Cmd == "sync" && !c.Once && !c.DryRun
 	if live && tray.RelaunchInConhost() {
-		return 0 // the sync goes on in a window that can hide in the tray
+		os.Exit(0) // the sync goes on in a window that can hide in the tray; this one closes at once
 	}
 
 	if c.Cmd == "init" {
@@ -100,7 +101,7 @@ func run(ctx context.Context, args []string) int {
 	// The tray icon shows how a live sync goes; it is grey while the check connects.
 	var icon *tray.Icon
 	if live {
-		if icon, err = tray.Start("owysync: " + filepath.Base(dir)); err != nil {
+		if icon, err = tray.Start("owysync: "+filepath.Base(dir), exit); err != nil {
 			fmt.Fprintln(stderr, "warning: no tray icon:", err)
 		}
 		defer icon.Close()

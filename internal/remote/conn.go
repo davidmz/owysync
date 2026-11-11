@@ -31,6 +31,8 @@ type Options struct {
 	Port         int
 	User         string
 	IdentityFile string
+	// KeyFingerprint ("SHA256:...") limits authentication to the one key with this fingerprint.
+	KeyFingerprint string
 	// KnownHostsFile defaults to ~/.ssh/known_hosts (%USERPROFILE%\.ssh\known_hosts).
 	KnownHostsFile string
 	Timeout        time.Duration // for TCP and the handshake; defaults to 10s
@@ -223,7 +225,7 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 		case keyErr != nil:
 			return nil, &ConnError{StageAuth, keyErr}
 		case strings.Contains(err.Error(), "unable to authenticate"):
-			return nil, &ConnError{StageAuth, fmt.Errorf("the server rejected the keys of user %s: add a key to ssh-agent or set identity_file (%w)", o.User, err)}
+			return nil, &ConnError{StageAuth, fmt.Errorf("the server rejected the keys of user %s: add a key to ssh-agent or Pageant, or set identity_file (%w)", o.User, err)}
 		case strings.Contains(err.Error(), "no common algorithm for host key"):
 			return nil, &ConnError{StageHostKey, fmt.Errorf("the server offers none of the key algorithms recorded in known_hosts (%s); connect with the standard ssh client and update the entry: %s (%w)", strings.Join(algs, ", "), o.sshHint(), err)}
 		}
@@ -287,30 +289,64 @@ func (o Options) explainHostKey(err error) error {
 	return err
 }
 
-// signers returns the ssh-agent keys, then identity_file. An identity_file error is returned
-// together with the agent keys, if any.
+// signers returns the ssh-agent keys, then Pageant's, then identity_file; with KeyFingerprint,
+// only the matching one. An identity_file error is returned together with the other keys, if any.
 func (o Options) signers(agentConn *io.Closer) ([]ssh.Signer, error) {
 	var signers []ssh.Signer
+	var from []string // the source of each signer, for the fingerprint error
+	add := func(src string, ss ...ssh.Signer) {
+		signers = append(signers, ss...)
+		for range ss {
+			from = append(from, src)
+		}
+	}
 	if f, err := os.OpenFile(AgentPipe, agentOpenFlags, 0); err == nil {
 		*agentConn = f // closed by Connect: signing happens during the handshake
-		signers, _ = agent.NewClient(f).Signers()
+		ss, _ := agent.NewClient(f).Signers()
+		add("ssh-agent", ss...)
 	}
-	if o.IdentityFile == "" {
-		return signers, nil
+	add("Pageant", pageantSigners()...)
+	var fileErr error
+	if o.IdentityFile != "" {
+		s, err := o.identityFile()
+		if err != nil {
+			fileErr = err
+		} else {
+			add("identity_file", s)
+		}
 	}
+	if o.KeyFingerprint == "" {
+		return signers, fileErr
+	}
+	var have []string
+	for i, s := range signers {
+		fp := ssh.FingerprintSHA256(s.PublicKey())
+		if fp == o.KeyFingerprint {
+			return []ssh.Signer{s}, nil
+		}
+		have = append(have, fmt.Sprintf("%s (%s)", fp, from[i]))
+	}
+	list := "none"
+	if len(have) > 0 {
+		list = strings.Join(have, ", ")
+	}
+	return nil, errors.Join(fmt.Errorf("key_fingerprint: no key %s in ssh-agent, Pageant or identity_file; available: %s", o.KeyFingerprint, list), fileErr)
+}
+
+func (o Options) identityFile() (ssh.Signer, error) {
 	data, err := os.ReadFile(o.IdentityFile)
 	if err != nil {
-		return signers, fmt.Errorf("identity_file: %w", err)
+		return nil, fmt.Errorf("identity_file: %w", err)
 	}
 	s, err := ssh.ParsePrivateKey(data)
 	var pm *ssh.PassphraseMissingError
 	if errors.As(err, &pm) {
-		return signers, fmt.Errorf("key %s is protected by a passphrase; add it to ssh-agent: ssh-add %s", o.IdentityFile, o.IdentityFile)
+		return nil, fmt.Errorf("key %s is protected by a passphrase; add it to ssh-agent (ssh-add %s) or Pageant", o.IdentityFile, o.IdentityFile)
 	}
 	if err != nil {
-		return signers, fmt.Errorf("identity_file %s: %w", o.IdentityFile, err)
+		return nil, fmt.Errorf("identity_file %s: %w", o.IdentityFile, err)
 	}
-	return append(signers, s), nil
+	return s, nil
 }
 
 func (c *Client) Close() error {

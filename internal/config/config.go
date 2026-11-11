@@ -2,6 +2,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -15,18 +17,21 @@ import (
 const Dir = ".owysync"
 
 type Config struct {
-	Host          string
-	Port          int
-	User          string
-	IdentityFile  string // empty means ssh-agent only
-	RemoteRoot    string
-	FileMode      uint32
-	DirMode       uint32
-	DebounceMS    int
-	MTimeWindow   int // seconds
-	Concurrency   int
-	BulkThreshold int  // 0 disables bulk mode
-	Sound         bool // chime after a sync that changed the remote
+	Host         string
+	Port         int
+	User         string
+	IdentityFile string // empty means agent keys only
+	// KeyFingerprint ("SHA256:...") picks the one key to offer among the agents and identity_file;
+	// empty means all of them.
+	KeyFingerprint string
+	RemoteRoot     string
+	FileMode       uint32
+	DirMode        uint32
+	DebounceMS     int
+	MTimeWindow    int // seconds
+	Concurrency    int
+	BulkThreshold  int  // 0 disables bulk mode
+	Sound          bool // chime after a sync that changed the remote
 }
 
 func defaults() Config {
@@ -93,6 +98,8 @@ func Parse(text string) (*Config, error) {
 			c.User = val
 		case "identity_file":
 			c.IdentityFile = val
+		case "key_fingerprint":
+			c.KeyFingerprint, err = parseFingerprint(val)
 		case "remote_root":
 			if !strings.HasPrefix(val, "/") {
 				err = fmt.Errorf("an absolute path (starting with /) is required, got %q", val)
@@ -156,6 +163,19 @@ func parseInt(s string, lo, hi int) (int, error) {
 		return 0, fmt.Errorf("expected an integer from %d to %d, got %q", lo, hi, s)
 	}
 	return n, nil
+}
+
+// parseFingerprint finds a SHA256 key fingerprint in s, so that a whole line copied from
+// `ssh-add -l` or PuTTYgen is accepted.
+func parseFingerprint(s string) (string, error) {
+	const prefix = "SHA256:"
+	if i := strings.Index(s, prefix); i >= 0 {
+		fp := strings.Fields(s[i:])[0]
+		if b, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(fp[len(prefix):], "=")); err == nil && len(b) == sha256.Size {
+			return prefix + base64.RawStdEncoding.EncodeToString(b), nil
+		}
+	}
+	return "", fmt.Errorf("expected a SHA256 fingerprint as shown by `ssh-add -l` or PuTTYgen (SHA256:...), got %q", s)
 }
 
 func parseMode(s string) (uint32, error) {

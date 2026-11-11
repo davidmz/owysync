@@ -38,7 +38,7 @@ func TestConfigText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uncommented config: %v", err)
 	}
-	all.IdentityFile = "" // the example path is not a default
+	all.IdentityFile, all.KeyFingerprint = "", "" // the examples are not defaults
 	if !reflect.DeepEqual(all, want) {
 		t.Fatalf("commented values differ from the defaults:\n%+v\n%+v", all, want)
 	}

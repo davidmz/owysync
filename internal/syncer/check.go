@@ -42,7 +42,7 @@ func (e *Env) setClient(c *remote.Client) {
 }
 
 func connOptions(cfg *config.Config) remote.Options {
-	return remote.Options{Host: cfg.Host, Port: cfg.Port, User: cfg.User, IdentityFile: cfg.IdentityFile}
+	return remote.Options{Host: cfg.Host, Port: cfg.Port, User: cfg.User, IdentityFile: cfg.IdentityFile, KeyFingerprint: cfg.KeyFingerprint}
 }
 
 // Check runs checks 1-8 from spec §4.2 in order, printing one line per check to out

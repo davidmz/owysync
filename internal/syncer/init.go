@@ -62,6 +62,7 @@ remote_root = %s
 # Uncomment a line to change the default.
 # port = 22
 # identity_file = C:\Users\you\.ssh\id_ed25519
+# key_fingerprint = SHA256:1/A5efnrQtVxmnaIoCvinfoB6myC9OvafDaokOBveWo
 # file_mode = 0644
 # dir_mode = 0755
 # debounce_ms = 100

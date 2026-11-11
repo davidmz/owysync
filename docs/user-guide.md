@@ -137,7 +137,7 @@ Writes nothing on either side. Runs the checks in order, prints `ok` or `FAIL: r
 1. `.owysync\config` and `.owysync\ignore` exist and parse.
 2. A TCP connection to `host:port`.
 3. The host key is in `known_hosts` and matches.
-4. Authentication (ssh-agent, then `identity_file`).
+4. Authentication (ssh-agent, Pageant, then `identity_file`).
 5. The SFTP subsystem works.
 6. A shell is available, the `stat` variant is detected (printed) and `tar` is present.
 7. `remote_root` exists and is a directory.
@@ -154,7 +154,8 @@ Lines of the form `key = value`. Lines starting with `#` are comments. Each key 
 | `host` | yes | — | Server name or address. `host:port` and `[ipv6]:port` are accepted. Do not set the port in both `host` and `port` |
 | `port` | | `22` | SSH port |
 | `user` | yes | — | Remote user |
-| `identity_file` | | — | Full path to a private key, e.g. `C:\Users\you\.ssh\id_ed25519`. Without it, only ssh-agent keys are used |
+| `identity_file` | | — | Full path to a private key, e.g. `C:\Users\you\.ssh\id_ed25519`. Without it, only agent keys are used |
+| `key_fingerprint` | | — | Fingerprint of the one key to use, e.g. `SHA256:1/A5efnrQtVxmnaIoCvinfoB6myC9OvafDaokOBveWo`. A whole line copied from `ssh-add -l` or PuTTYgen is accepted. Without it, all keys from the agents and `identity_file` are offered |
 | `remote_root` | yes | — | Absolute remote path (starts with `/`). It may be a symlink to a directory |
 | `file_mode` | | `0644` | Permissions (octal) for new files |
 | `dir_mode` | | `0755` | Permissions (octal) for new directories |
@@ -177,9 +178,11 @@ identity_file = C:\Users\alice\.ssh\id_ed25519
 
 ## SSH setup
 
-OwySync has its own SSH client. It does **not** read `~/.ssh/config` and does not support passwords or Pageant.
+OwySync has its own SSH client. It does **not** read `~/.ssh/config` and does not support passwords.
 
-- **Authentication.** OwySync first tries the keys in the Windows OpenSSH agent (the `ssh-agent` service), then `identity_file`. A passphrase-protected `identity_file` cannot be used directly: add that key to the agent instead.
+- **Authentication.** OwySync first tries the keys in the Windows OpenSSH agent (the `ssh-agent` service), then in PuTTY Pageant, then `identity_file`. A passphrase-protected `identity_file` cannot be used directly: add that key to an agent instead.
+
+  If the agents hold many keys, the server may drop the connection before it gets to the right one (sshd allows 6 attempts by default). Set `key_fingerprint` to offer only that key; if no source has it, `owysync check` lists the fingerprints it found.
 
   Start the agent once (in an elevated PowerShell) and add the key:
 
@@ -322,7 +325,7 @@ Started from Explorer or a shortcut, `owysync sync` runs in a window of its own 
 | --- | --- |
 | `the directory is not initialized, run owysync init` | Run `owysync init`, or pass the right path |
 | `host key: FAIL` | Connect once with `ssh -p <port> <user>@<host>` and accept the key |
-| `authentication: FAIL` | Add the key to ssh-agent (`ssh-add`) or set `identity_file`. A passphrase-protected key must go through the agent |
+| `authentication: FAIL` | Add the key to ssh-agent (`ssh-add`) or Pageant, or set `identity_file`. A passphrase-protected key must go through an agent. With `key_fingerprint`, check that it matches one of the listed keys |
 | `shell: FAIL` | The account has no usable shell, or lacks `find`/`stat`/`tar`. A restricted shell or SFTP-only account won't work |
 | `marker .owysync/remote: FAIL` | Wrong `remote_root`, or the remote directory was never initialized. Fix the path, or run `owysync init --remote` |
 | `? is not supported, use *` | Rewrite the mask without `?` (for example `*.swp`, `*.swo`) |

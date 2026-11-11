@@ -22,6 +22,7 @@ func TestParseAllKeys(t *testing.T) {
 port = 2222
 user = u
 identity_file = C:\keys\id
+key_fingerprint = 256 SHA256:1/A5efnrQtVxmnaIoCvinfoB6myC9OvafDaokOBveWo dev@pc (ED25519)
 remote_root = /r
 file_mode = 0600
 dir_mode = 0700
@@ -33,7 +34,8 @@ sound = off`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Config{Host: "h", Port: 2222, User: "u", IdentityFile: `C:\keys\id`, RemoteRoot: "/r",
+	want := Config{Host: "h", Port: 2222, User: "u", IdentityFile: `C:\keys\id`,
+		KeyFingerprint: "SHA256:1/A5efnrQtVxmnaIoCvinfoB6myC9OvafDaokOBveWo", RemoteRoot: "/r",
 		FileMode: 0o600, DirMode: 0o700, DebounceMS: 5, MTimeWindow: 2, Concurrency: 8, BulkThreshold: 0, Sound: false}
 	if *c != want {
 		t.Fatalf("got %+v\nwant %+v", *c, want)
@@ -82,6 +84,8 @@ func TestParseErrors(t *testing.T) {
 		{"concurrency 0", base + "concurrency = 0\n", "line 4"},
 		{"negative debounce", base + "debounce_ms = -1\n", "line 4"},
 		{"bad sound", base + "sound = yes\n", "on or off"},
+		{"md5 fingerprint", base + "key_fingerprint = MD5:12:34\n", "SHA256"},
+		{"short fingerprint", base + "key_fingerprint = SHA256:abc\n", "SHA256"},
 		{"bad host:port", "host = h:x\nuser = u\nremote_root = /r", "line 1"},
 	} {
 		_, err := Parse(tc.text)

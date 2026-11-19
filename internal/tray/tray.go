@@ -10,8 +10,9 @@ const (
 	Idle                  // green: connected, waiting for changes
 	Syncing               // bright green: a sync is running
 	Failed                // red: an error, or the connection is lost
+	Paused                // gray: the user paused the sync
 )
 
 func (s State) String() string {
-	return [...]string{"starting", "idle", "syncing", "error"}[s]
+	return [...]string{"starting", "idle", "syncing", "error", "paused"}[s]
 }

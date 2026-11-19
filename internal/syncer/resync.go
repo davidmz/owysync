@@ -28,6 +28,7 @@ type Options struct {
 	Verbose bool             // print every operation
 	Chime   func()           // called after a sync that changed the remote without errors; may be nil
 	State   func(tray.State) // called by Live when the sync state changes; may be nil
+	Pause   <-chan struct{}  // each value pauses or resumes Live; may be nil
 }
 
 // ErrFailed means the resync ran to the end but was not successful; the reasons are already printed.

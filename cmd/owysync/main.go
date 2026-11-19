@@ -116,6 +116,9 @@ func run(ctx context.Context, exit func(), args []string) int {
 	}
 	defer env.Close()
 	o := syncer.Options{DryRun: c.DryRun, Verbose: c.Verbose, State: icon.Set}
+	if live {
+		o.Pause = tray.Pauses(ctx)
+	}
 	if env.Cfg.Sound {
 		o.Chime = func() { sound.Play(c.Once) }
 	}

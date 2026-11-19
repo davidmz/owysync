@@ -38,7 +38,7 @@ var (
 	destroyMenu       = user32.NewProc("DestroyMenu")
 	getCursorPos      = user32.NewProc("GetCursorPos")
 	shellNotifyIcon   = windows.NewLazySystemDLL("shell32.dll").NewProc("Shell_NotifyIconW")
-	circleFiles       = [...]string{Starting: "circle-gray.png", Idle: "circle-green.png", Syncing: "circle-green-flash.png", Failed: "circle-red.png"}
+	circleFiles       = [...]string{Starting: "circle-gray.png", Idle: "circle-green.png", Syncing: "circle-green-flash.png", Failed: "circle-red.png", Paused: "circle-gray.png"}
 	minSyncing        = 500 * time.Millisecond // a short sync still shows as a visible flash
 	minShown          = 3 * time.Second        // the own console stays open at least this long
 )
@@ -50,7 +50,7 @@ const (
 	wmLButtonUp, wmRButtonUp     = 0x0202, 0x0205
 	mfString, mfSeparator        = 0x0, 0x800
 	tpmRightButton, tpmReturnCmd = 0x2, 0x100
-	cmdShow, cmdExit             = 1, 2
+	cmdShow, cmdExit, cmdPause   = 1, 2, 3
 	wmTrayIcon                   = 0x8000 + 1 // WM_APP + 1: the shell reports mouse events on the icon with it
 )
 
@@ -83,6 +83,20 @@ var wndProcCallback = windows.NewCallback(wndProc)
 // onExit is the Exit command of the icon's menu; there is one icon per process.
 var onExit func()
 
+// current is the icon of this process; the menu reads its state.
+var current *Icon
+
+// pauses gets a value for each press of P and each Pause or Resume in the menu.
+var pauses = make(chan struct{}, 1)
+
+// togglePause asks the sync to pause or resume; a request already waiting is enough.
+func togglePause() {
+	select {
+	case pauses <- struct{}{}:
+	default:
+	}
+}
+
 // wndProc handles the messages of the icon's window: a click on the icon shows the console,
 // a right click opens the menu.
 func wndProc(wnd windows.HWND, m uint32, wParam, lParam uintptr) uintptr {
@@ -94,6 +108,8 @@ func wndProc(wnd windows.HWND, m uint32, wParam, lParam uintptr) uintptr {
 		switch menu(uintptr(wnd)) {
 		case cmdShow:
 			showConsole()
+		case cmdPause:
+			togglePause()
 		case cmdExit:
 			onExit()
 		}
@@ -113,10 +129,18 @@ func menu(wnd uintptr) uintptr {
 		return 0
 	}
 	defer destroyMenu.Call(m)
+	pause := "Pause"
+	if current != nil {
+		current.mu.Lock()
+		if current.want == Paused {
+			pause = "Resume"
+		}
+		current.mu.Unlock()
+	}
 	for _, it := range []struct {
 		flags, cmd uintptr
 		text       string
-	}{{mfString, cmdShow, "Show"}, {mfSeparator, 0, ""}, {mfString, cmdExit, "Exit"}} {
+	}{{mfString, cmdShow, "Show"}, {mfString, cmdPause, pause}, {mfSeparator, 0, ""}, {mfString, cmdExit, "Exit"}} {
 		t, _ := windows.UTF16PtrFromString(it.text)
 		appendMenu.Call(m, it.flags, it.cmd, uintptr(unsafe.Pointer(t)))
 	}
@@ -185,6 +209,7 @@ func Start(tip string, exit func()) (*Icon, error) {
 		return nil, err
 	}
 	go i.watch()
+	current = i
 	return i, nil
 }
 

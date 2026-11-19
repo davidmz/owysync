@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ var (
 	isIconic              = user32.NewProc("IsIconic")
 	setForegroundWindow   = user32.NewProc("SetForegroundWindow")
 	setConsoleTitle       = kernel32.NewProc("SetConsoleTitleW")
+	readConsoleInput      = kernel32.NewProc("ReadConsoleInputW")
 )
 
 const (
@@ -150,4 +152,45 @@ func setConsoleIcon(h windows.Handle) {
 	// Posted: conhost is another process, and a hung one must not stop the sync.
 	postMessage.Call(w, wmSetIcon, iconSmall, uintptr(h))
 	postMessage.Call(w, wmSetIcon, iconBig, uintptr(h))
+}
+
+// inputRecord is INPUT_RECORD with its union read as KEY_EVENT_RECORD.
+type inputRecord struct {
+	EventType                uint16
+	_                        uint16
+	KeyDown                  int32
+	Repeat, VKey, Scan, Char uint16
+	ControlKeyState          uint32
+}
+
+const keyEvent, vkP = 0x1, 0x50
+
+// Pauses sends a value each time Pause or Resume is chosen in the icon's menu or P is pressed
+// in the console window (in any keyboard layout). The keys are read until ctx is done; other
+// keys typed meanwhile are discarded.
+func Pauses(ctx context.Context) <-chan struct{} {
+	h := windows.Handle(os.Stdin.Fd())
+	var mode uint32
+	if windows.GetConsoleMode(h, &mode) != nil {
+		return pauses // not a console: the menu only
+	}
+	go func() {
+		var recs [16]inputRecord
+		for ctx.Err() == nil {
+			// The timeout lets the loop see ctx end, so a later read of Enter gets its line.
+			if ev, _ := windows.WaitForSingleObject(h, 200); ev != windows.WAIT_OBJECT_0 {
+				continue
+			}
+			var n uint32
+			if r, _, _ := readConsoleInput.Call(uintptr(h), uintptr(unsafe.Pointer(&recs[0])), uintptr(len(recs)), uintptr(unsafe.Pointer(&n))); r == 0 {
+				return
+			}
+			for _, r := range recs[:n] {
+				if r.EventType == keyEvent && r.KeyDown != 0 && r.VKey == vkP {
+					togglePause()
+				}
+			}
+		}
+	}()
+	return pauses
 }

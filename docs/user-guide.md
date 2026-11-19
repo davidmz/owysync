@@ -107,6 +107,8 @@ The command always comes first. Every command except `help` and `version` takes 
 
 **Ctrl+C** stops running operations and exits right away. One press is enough. Temporary files left on the server are cleaned up on the next start.
 
+**P** in the live-mode window pauses the sync: changes are not sent until P is pressed again. The Pause and Resume commands of the tray icon's menu do the same. Resuming runs a full resync, so changes made during the pause on either side are taken into account.
+
 ### `owysync init`
 
 1. Fails if the directory already has `.owysync\`. In that case edit `.owysync\config` directly and verify it with `owysync check`.
@@ -293,9 +295,9 @@ Warnings and errors go to stderr, prefixed with `warning:` or `error:`.
 
 A short chime plays after every sync that changed the server without errors; a sync with nothing to do stays silent. Set `sound = off` in the config to turn it off.
 
-While `owysync sync` runs in live mode, an icon in the notification area shows its state: grey while it starts, green while it waits for changes, bright green during a sync, red after an error or while the connection is lost. Windows 11 may put a new icon under the ^ arrow; drag it to the taskbar to keep it in sight.
+While `owysync sync` runs in live mode, an icon in the notification area shows its state: grey while it starts or is paused, green while it waits for changes, bright green during a sync, red after an error or while the connection is lost. Windows 11 may put a new icon under the ^ arrow; drag it to the taskbar to keep it in sight.
 
-Started from Explorer or a shortcut, `owysync sync` runs in a window of its own (a classic console window, even where Windows Terminal is the default terminal). The window stays open until the first full resync succeeds (and at least 3 seconds) and then hides in the tray; minimizing it hides it again. Click the icon to show the window; its right-click menu has Show and Exit (Exit stops the sync as Ctrl+C does). In a window of its own, owysync waits for Enter before it exits (after the help, an error or the end of `init`), so that the output can be read; Ctrl+C and the close button end it at once. Started from a terminal, the window is left alone, and a click on the icon brings that terminal to the front.
+Started from Explorer or a shortcut, `owysync sync` runs in a window of its own (a classic console window, even where Windows Terminal is the default terminal). The window stays open until the first full resync succeeds (and at least 3 seconds) and then hides in the tray; minimizing it hides it again. Click the icon to show the window; its right-click menu has Show, Pause (Resume while paused) and Exit (Exit stops the sync as Ctrl+C does). In a window of its own, owysync waits for Enter before it exits (after the help, an error or the end of `init`), so that the output can be read; Ctrl+C and the close button end it at once. Started from a terminal, the window is left alone, and a click on the icon brings that terminal to the front.
 
 **Exit codes:** `0` means success; `1` means a failed check, a failed resync (`--once`), an interruption or an error; `2` means invalid command-line arguments.
 

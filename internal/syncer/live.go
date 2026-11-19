@@ -42,7 +42,7 @@ func Live(ctx context.Context, env *Env, localDir string, o Options, out, errOut
 		return err
 	}
 	defer w.Close()
-	l := &live{env: env, localDir: localDir, verbose: o.Verbose, chime: o.Chime, state: o.State, out: out, errOut: errOut,
+	l := &live{env: env, localDir: localDir, verbose: o.Verbose, chime: o.Chime, state: o.State, pause: o.Pause, out: out, errOut: errOut,
 		debounce: time.Duration(env.Cfg.DebounceMS) * time.Millisecond,
 		dirty:    map[string]bool{}, failed: map[string]bool{}, wake: make(chan struct{}, 1)}
 	go l.collect(w.C)
@@ -55,6 +55,7 @@ type live struct {
 	verbose  bool
 	chime    func()
 	state    func(tray.State)
+	pause    <-chan struct{}
 	out      io.Writer
 	errOut   io.Writer
 	debounce time.Duration
@@ -145,6 +146,11 @@ func (l *live) loop(ctx context.Context) error {
 				return err
 			}
 			needResync = true
+		case <-l.pause:
+			if err := l.paused(ctx); err != nil {
+				return err
+			}
+			needResync = true // local and remote may have changed meanwhile
 		case <-l.wake:
 		case <-wait:
 		case <-retry.C:
@@ -155,6 +161,20 @@ func (l *live) loop(ctx context.Context) error {
 			l.mu.Unlock()
 			clear(l.failed)
 		}
+	}
+}
+
+// paused waits for the next press of the pause key. Local events still gather but are dropped
+// by the resync that follows; a lost connection is found and replaced by that resync too.
+func (l *live) paused(ctx context.Context) error {
+	l.set(tray.Paused)
+	fmt.Fprintln(l.out, "paused; press P or choose Resume in the tray menu to resume")
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-l.pause:
+		fmt.Fprintln(l.out, "resumed")
+		return nil
 	}
 }
 
